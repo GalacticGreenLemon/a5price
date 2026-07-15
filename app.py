@@ -1,6 +1,7 @@
 import csv
 import io
 import os
+import re
 import zipfile
 
 import streamlit as st
@@ -176,6 +177,48 @@ def generate_zip(data_rows):
 
 
 # ---------------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------------
+def normalize_percentage(text):
+    """Accepts '20', '20%', '-20', '-20%' and returns a plain number string like '20'."""
+    if not text:
+        return ""
+    cleaned = text.strip().replace(",", ".").replace("%", "").replace("-", "").strip()
+    return cleaned
+
+
+def parse_m2_per_box(name):
+    """
+    Looks for a box area written into the product name. Handles messy real-world
+    formatting: '1.59 m2/cutie', '1,59mp', '1.59 mp', '1.59m2', 'mp 1.59', etc.
+    Requires the number to sit directly next to an mp/m2/m² unit — a bare number
+    (like the '60' in '60 x 60') is deliberately NOT matched, since there's no
+    reliable way to tell it apart from a dimension.
+    Returns the number as a float, or None if no such pattern is found.
+    """
+    if not name:
+        return None
+
+    # number followed by unit: "1.59 m2/cutie", "1,59mp", "1.59m2"
+    match = re.search(r'(\d+(?:[.,]\d+)?)\s*(?:mp|m2|m²)\b(?:\s*/\s*(?:cutie|buc))?', name, re.IGNORECASE)
+    if match:
+        try:
+            return float(match.group(1).replace(",", "."))
+        except ValueError:
+            pass
+
+    # unit followed by number: "mp 1.59"
+    match = re.search(r'\b(?:mp|m2|m²)\s*(\d+(?:[.,]\d+)?)', name, re.IGNORECASE)
+    if match:
+        try:
+            return float(match.group(1).replace(",", "."))
+        except ValueError:
+            pass
+
+    return None
+
+
+# ---------------------------------------------------------------------------
 # Validation for manually-entered products
 # ---------------------------------------------------------------------------
 def validate_product(p, pricing_type):
@@ -187,13 +230,13 @@ def validate_product(p, pricing_type):
     if not p["Percentage"].strip():
         errors.append("Procentul de reducere este obligatoriu.")
     else:
-        cleaned = p["Percentage"].strip().replace(",", ".").replace("%", "")
+        cleaned = normalize_percentage(p["Percentage"])
         try:
             pct = float(cleaned)
             if pct <= 0 or pct >= 100:
-                errors.append("Procentul trebuie să fie un număr între 1 și 99 (ex: 20).")
+                errors.append("Procentul trebuie să fie un număr între 1 și 99 (ex: 20, 20% sau -20).")
         except ValueError:
-            errors.append("Procentul trebuie să fie un număr, fără text (ex: 20, nu \"20% reducere\").")
+            errors.append("Procentul trebuie să fie un număr, fără text (ex: 20, 20% sau -20).")
 
     if pricing_type == "Preț pe bucată":
         if not p["OldPrice_piece"].strip():
@@ -264,11 +307,12 @@ with tab_manual:
     with st.expander("ℹ️ Instrucțiuni completare — citește înainte de a adăuga produse"):
         st.markdown(
             """
-- **Nume produs** — scrie numele complet; dacă e lung, se va rupe automat pe două rânduri pe etichetă.
-- **Procent reducere** — scrie DOAR numărul, fără simbolul %. Corect: `20`  Greșit: `20%` sau `-20`
+- **Nume produs** — scrie numele complet; dacă e lung, se va rupe automat pe două rânduri pe etichetă. Pentru produsele la m², dacă numele conține suprafața cutiei lângă „mp”, „m2” sau „m²” (ex: „1.59 m2/cutie”, „1,59mp”, „mp 1.59”), prețul pe cutie se calculează automat. Dacă e doar un număr fără unitate (ex: doar „1.59”, care s-ar putea confunda cu o dimensiune ca „60 x 60”), nu se calculează automat — se completează manual.
+- **Procent reducere** — scrie numărul; sunt acceptate toate variantele: `20`, `20%`, `-20`, `-20%`.
 - **Tip preț** — alege una din variante:
-    - *Preț pe bucată* — pentru produse vândute la bucată (robinete, chiuvete, obiecte sanitare etc.)
-    - *Preț pe m² + cutie* — pentru produse vândute la m² (gresie, faianță, parchet); prețul pe cutie e opțional.
+    - *Preț pe bucată* — pentru produse vândute la bucată (robinete, chiuvete, obiecte sanitare etc.); acolo unde ai deja un preț vechi pe bucată, acest flux merge direct.
+    - *Preț pe m² + cutie* — pentru produse vândute la m² (gresie, faianță, parchet), atunci când sistemul dă doar prețul pe m² (nu și pe cutie), de obicei pentru că are deja o mică reducere aplicată intern.
+- **Calcul automat preț cutie** — dacă numele conține suprafața cutiei (ex: „1.59 m2/cutie”), prețul cutiei se calculează automat din suprafață × prețul nou pe m². Dacă nu găsește acest text în nume, sau bifezi „Prefer să calculez eu prețul pe cutie”, poți completa prețul manual.
 - **Prețuri** — scrie doar cifre; virgula sau punctul pentru zecimale sunt ambele acceptate. Exemplu: `129,99`
 - **Cod de bare (EAN)** — EXACT 12 sau 13 cifre, fără spații și fără litere. Îl găsești sub barele de pe produs/ambalaj.
 - **Cod produs** — codul intern (SKU) al produsului, ca să poată fi găsit ulterior.
@@ -288,7 +332,7 @@ Dacă un câmp e completat greșit, aplicația îți va arăta exact ce trebuie 
         """Returns the discounted price as a Romanian-style string, or None if inputs aren't valid numbers yet."""
         try:
             old_val = float(old_text.strip().replace(",", "."))
-            pct_val = float(pct_text.strip().replace(",", "."))
+            pct_val = float(normalize_percentage(pct_text))
             new_val = old_val * (1 - pct_val / 100)
             return f"{new_val:.2f}".replace(".", ",")
         except (ValueError, AttributeError):
@@ -345,9 +389,34 @@ Dacă un câmp e completat greșit, aplicația îți va arăta exact ce trebuie 
                     "Preț nou (lei/m²) *", placeholder="ex: 69,00", key="m_new_m2_manual"
                 )
 
-            new_piece = st.text_input(
-                "Preț cutie (lei/cutie) — opțional", placeholder="ex: 249,00", key="m_new_piece_box"
+            m2_per_box = parse_m2_per_box(name)
+            manual_box = st.checkbox(
+                "Prefer să calculez eu prețul pe cutie", key="m_manual_box"
             )
+
+            if not manual_box and m2_per_box and new_m2:
+                try:
+                    box_val = float(new_m2.strip().replace(",", ".")) * m2_per_box
+                    box_computed = f"{box_val:.2f}".replace(".", ",")
+                    st.text_input(
+                        f"Preț cutie (lei/cutie) — calculat automat ({m2_per_box:g} m²/cutie × preț nou/m²)",
+                        value=box_computed,
+                        disabled=True,
+                    )
+                    new_piece = box_computed
+                except ValueError:
+                    new_piece = st.text_input(
+                        "Preț cutie (lei/cutie) — opțional", placeholder="ex: 249,00", key="m_new_piece_box"
+                    )
+            else:
+                if not manual_box and not m2_per_box:
+                    st.info(
+                        "Nu am găsit o suprafață clară (mp/m2/m²) în numele produsului, așa că "
+                        "prețul cutiei rămâne de completat manual mai jos."
+                    )
+                new_piece = st.text_input(
+                    "Preț cutie (lei/cutie) — opțional", placeholder="ex: 249,00", key="m_new_piece_box"
+                )
 
         if auto_calc:
             st.caption("💡 Prețul nou este calculat automat din prețul vechi și procentul de reducere.")
@@ -359,7 +428,7 @@ Dacă un câmp e completat greșit, aplicația îți va arăta exact ce trebuie 
         if st.button("➕ Adaugă în listă", key="add_product_btn"):
             candidate = {
                 "Name": name,
-                "Percentage": percentage.strip(),
+                "Percentage": normalize_percentage(percentage),
                 "OldPrice_m2": old_m2.strip(),
                 "NewPrice_m2": new_m2.strip(),
                 "OldPrice_piece": old_piece.strip(),
@@ -378,7 +447,7 @@ Dacă un câmp e completat greșit, aplicația îți va arăta exact ce trebuie 
                 st.session_state.manual_products.append(candidate)
                 for k in [
                     "m_name", "m_percentage", "m_old_piece", "m_new_piece_manual",
-                    "m_old_m2", "m_new_m2_manual", "m_new_piece_box",
+                    "m_old_m2", "m_new_m2_manual", "m_new_piece_box", "m_manual_box",
                     "m_barcode", "m_product_code", "m_status",
                 ]:
                     if k in st.session_state:
