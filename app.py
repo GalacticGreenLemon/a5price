@@ -176,33 +176,270 @@ def generate_zip(data_rows):
 
 
 # ---------------------------------------------------------------------------
+# Validation for manually-entered products
+# ---------------------------------------------------------------------------
+def validate_product(p, pricing_type):
+    errors = []
+
+    if not p["Name"].strip():
+        errors.append("Numele produsului este obligatoriu.")
+
+    if not p["Percentage"].strip():
+        errors.append("Procentul de reducere este obligatoriu.")
+    else:
+        cleaned = p["Percentage"].strip().replace(",", ".").replace("%", "")
+        try:
+            pct = float(cleaned)
+            if pct <= 0 or pct >= 100:
+                errors.append("Procentul trebuie să fie un număr între 1 și 99 (ex: 20).")
+        except ValueError:
+            errors.append("Procentul trebuie să fie un număr, fără text (ex: 20, nu \"20% reducere\").")
+
+    if pricing_type == "Preț pe bucată":
+        if not p["OldPrice_piece"].strip():
+            errors.append("Prețul vechi (lei/buc) este obligatoriu.")
+        if not p["NewPrice_piece"].strip():
+            errors.append("Prețul nou (lei/buc) este obligatoriu.")
+    else:
+        if not p["OldPrice_m2"].strip():
+            errors.append("Prețul vechi (lei/m²) este obligatoriu.")
+        if not p["NewPrice_m2"].strip():
+            errors.append("Prețul nou (lei/m²) este obligatoriu.")
+
+    barcode_num = p["BarcodeNum"].strip()
+    if not barcode_num:
+        errors.append("Codul de bare este obligatoriu.")
+    elif not barcode_num.isdigit():
+        errors.append("Codul de bare trebuie să conțină DOAR cifre (fără spații, litere sau liniuțe).")
+    elif len(barcode_num) not in (12, 13):
+        errors.append(f"Codul de bare trebuie să aibă 12 sau 13 cifre — cel introdus are {len(barcode_num)}.")
+
+    if not p["ProductCode"].strip():
+        errors.append("Codul produsului este obligatoriu.")
+
+    return errors
+
+
+# ---------------------------------------------------------------------------
 # UI
 # ---------------------------------------------------------------------------
 st.set_page_config(page_title="Generator etichete preț", page_icon="🏷️")
 
 st.title("🏷️ Generator etichete preț")
-st.write("Încarcă fișierul CSV cu produsele și apasă butonul pentru a genera etichetele.")
 
-uploaded_file = st.file_uploader("Alege fișierul CSV", type=["csv"])
+tab_csv, tab_manual, tab_calc = st.tabs(["📄 Din fișier CSV", "✍️ Adaugă manual", "🧮 Calculator reducere"])
 
-if uploaded_file is not None:
-    try:
-        text_data = uploaded_file.getvalue().decode("utf-8")
-        reader = csv.DictReader(io.StringIO(text_data))
-        data_rows = list(reader)
-        st.success(f"Fișier încărcat — {len(data_rows)} produse găsite.")
+# ---- Tab 1: existing CSV upload flow --------------------------------------
+with tab_csv:
+    st.write("Pentru cine primește fișierul cu toate produsele deja pregătit.")
+    uploaded_file = st.file_uploader("Alege fișierul CSV", type=["csv"])
 
-        if st.button("Generează etichetele", type="primary"):
+    if uploaded_file is not None:
+        try:
+            text_data = uploaded_file.getvalue().decode("utf-8")
+            reader = csv.DictReader(io.StringIO(text_data))
+            data_rows = list(reader)
+            st.success(f"Fișier încărcat — {len(data_rows)} produse găsite.")
+
+            if st.button("Generează etichetele", type="primary", key="generate_csv"):
+                with st.spinner("Se generează imaginile..."):
+                    zip_buffer, count = generate_zip(data_rows)
+                st.success(f"Gata! {count} imagini generate.")
+                st.download_button(
+                    label="⬇️ Descarcă arhiva ZIP",
+                    data=zip_buffer,
+                    file_name="generated_labels.zip",
+                    mime="application/zip",
+                    key="download_csv",
+                )
+        except Exception as e:
+            st.error(f"A apărut o eroare la citirea fișierului: {e}")
+    else:
+        st.info("Aștept fișierul CSV.")
+
+# ---- Tab 2: manual entry, for a handful of products by hand ---------------
+with tab_manual:
+    st.write("Pentru cine are doar câteva produse (până la 20) și vrea să le introducă direct aici.")
+
+    with st.expander("ℹ️ Instrucțiuni completare — citește înainte de a adăuga produse"):
+        st.markdown(
+            """
+- **Nume produs** — scrie numele complet; dacă e lung, se va rupe automat pe două rânduri pe etichetă.
+- **Procent reducere** — scrie DOAR numărul, fără simbolul %. Corect: `20`  Greșit: `20%` sau `-20`
+- **Tip preț** — alege una din variante:
+    - *Preț pe bucată* — pentru produse vândute la bucată (robinete, chiuvete, obiecte sanitare etc.)
+    - *Preț pe m² + cutie* — pentru produse vândute la m² (gresie, faianță, parchet); prețul pe cutie e opțional.
+- **Prețuri** — scrie doar cifre; virgula sau punctul pentru zecimale sunt ambele acceptate. Exemplu: `129,99`
+- **Cod de bare (EAN)** — EXACT 12 sau 13 cifre, fără spații și fără litere. Îl găsești sub barele de pe produs/ambalaj.
+- **Cod produs** — codul intern (SKU) al produsului, ca să poată fi găsit ulterior.
+- **Text status** — opțional; de exemplu "Stoc limitat" sau "Ofertă specială". Poate rămâne gol.
+
+Dacă un câmp e completat greșit, aplicația îți va arăta exact ce trebuie corectat înainte să adauge produsul în listă.
+            """
+        )
+
+    if "manual_products" not in st.session_state:
+        st.session_state.manual_products = []
+
+    MAX_PRODUCTS = 20
+    remaining = MAX_PRODUCTS - len(st.session_state.manual_products)
+
+    def _compute_new_price(old_text, pct_text):
+        """Returns the discounted price as a Romanian-style string, or None if inputs aren't valid numbers yet."""
+        try:
+            old_val = float(old_text.strip().replace(",", "."))
+            pct_val = float(pct_text.strip().replace(",", "."))
+            new_val = old_val * (1 - pct_val / 100)
+            return f"{new_val:.2f}".replace(".", ",")
+        except (ValueError, AttributeError):
+            return None
+
+    if remaining > 0:
+        st.subheader(f"Adaugă produs ({len(st.session_state.manual_products)}/{MAX_PRODUCTS})")
+
+        name = st.text_input("Nume produs *", key="m_name")
+        percentage = st.text_input("Procent reducere (%) *", placeholder="ex: 20", key="m_percentage")
+        pricing_type = st.radio("Tip preț *", ["Preț pe bucată", "Preț pe m² + cutie"], key="m_pricing_type")
+
+        manual_calc = st.checkbox(
+            "Prefer să calculez eu prețul nou (fără calcul automat)", key="m_manual_calc"
+        )
+        auto_calc = not manual_calc
+
+        col1, col2 = st.columns(2)
+        if pricing_type == "Preț pe bucată":
+            old_piece = col1.text_input("Preț vechi (lei/buc) *", placeholder="ex: 45,00", key="m_old_piece")
+            old_m2 = ""
+            new_m2 = ""
+
+            if auto_calc:
+                computed = _compute_new_price(old_piece, percentage)
+                if computed:
+                    col2.text_input(
+                        "Preț nou (lei/buc) — calculat automat", value=computed, disabled=True
+                    )
+                    new_piece = computed
+                else:
+                    col2.info("Completează prețul vechi și procentul pentru calcul automat.")
+                    new_piece = ""
+            else:
+                new_piece = col2.text_input(
+                    "Preț nou (lei/buc) *", placeholder="ex: 36,00", key="m_new_piece_manual"
+                )
+        else:
+            old_m2 = col1.text_input("Preț vechi (lei/m²) *", placeholder="ex: 89,00", key="m_old_m2")
+            old_piece = ""
+
+            if auto_calc:
+                computed = _compute_new_price(old_m2, percentage)
+                if computed:
+                    col2.text_input(
+                        "Preț nou (lei/m²) — calculat automat", value=computed, disabled=True
+                    )
+                    new_m2 = computed
+                else:
+                    col2.info("Completează prețul vechi și procentul pentru calcul automat.")
+                    new_m2 = ""
+            else:
+                new_m2 = col2.text_input(
+                    "Preț nou (lei/m²) *", placeholder="ex: 69,00", key="m_new_m2_manual"
+                )
+
+            new_piece = st.text_input(
+                "Preț cutie (lei/cutie) — opțional", placeholder="ex: 249,00", key="m_new_piece_box"
+            )
+
+        if auto_calc:
+            st.caption("💡 Prețul nou este calculat automat din prețul vechi și procentul de reducere.")
+
+        barcode_num = st.text_input("Cod de bare (EAN) *", placeholder="ex: 5901234123457", key="m_barcode")
+        product_code = st.text_input("Cod produs *", placeholder="ex: GRE-4521", key="m_product_code")
+        status_text = st.text_input("Text status — opțional", placeholder="ex: Stoc limitat", key="m_status")
+
+        if st.button("➕ Adaugă în listă", key="add_product_btn"):
+            candidate = {
+                "Name": name,
+                "Percentage": percentage.strip(),
+                "OldPrice_m2": old_m2.strip(),
+                "NewPrice_m2": new_m2.strip(),
+                "OldPrice_piece": old_piece.strip(),
+                "NewPrice_piece": new_piece.strip(),
+                "BarcodeNum": barcode_num.strip(),
+                "ProductCode": product_code.strip(),
+                "StatusText": status_text.strip(),
+            }
+            errors = validate_product(candidate, pricing_type)
+            if errors:
+                st.error(
+                    "Nu am putut adăuga produsul din cauza următoarelor erori:\n\n"
+                    + "\n".join(f"- {e}" for e in errors)
+                )
+            else:
+                st.session_state.manual_products.append(candidate)
+                for k in [
+                    "m_name", "m_percentage", "m_old_piece", "m_new_piece_manual",
+                    "m_old_m2", "m_new_m2_manual", "m_new_piece_box",
+                    "m_barcode", "m_product_code", "m_status",
+                ]:
+                    if k in st.session_state:
+                        del st.session_state[k]
+                st.success(f"„{name}” a fost adăugat în listă.")
+                st.rerun()
+    else:
+        st.warning(f"Ai atins limita de {MAX_PRODUCTS} produse. Șterge unul mai jos dacă vrei să adaugi altul.")
+
+    if st.session_state.manual_products:
+        st.subheader("Produse adăugate")
+        for idx, p in enumerate(st.session_state.manual_products):
+            cols = st.columns([5, 1])
+            if p["OldPrice_piece"]:
+                price_label = f"{p['NewPrice_piece']} lei/buc"
+            else:
+                price_label = f"{p['NewPrice_m2']} lei/m²"
+            cols[0].write(f"**{p['Name']}** — {price_label} (-{p['Percentage']}%) — cod: {p['ProductCode']}")
+            if cols[1].button("🗑️ Șterge", key=f"del_{idx}"):
+                st.session_state.manual_products.pop(idx)
+                st.rerun()
+
+        st.divider()
+        if st.button("Generează etichetele", type="primary", key="generate_manual"):
             with st.spinner("Se generează imaginile..."):
-                zip_buffer, count = generate_zip(data_rows)
+                zip_buffer, count = generate_zip(st.session_state.manual_products)
             st.success(f"Gata! {count} imagini generate.")
             st.download_button(
                 label="⬇️ Descarcă arhiva ZIP",
                 data=zip_buffer,
                 file_name="generated_labels.zip",
                 mime="application/zip",
+                key="download_manual",
             )
-    except Exception as e:
-        st.error(f"A apărut o eroare la citirea fișierului: {e}")
-else:
-    st.info("Aștept fișierul CSV.")
+    else:
+        st.info("Nu ai adăugat încă niciun produs.")
+
+# ---- Tab 3: quick discount calculator --------------------------------------
+with tab_calc:
+    st.write(
+        "Pune prețul curent și procentul de reducere — vezi imediat prețul nou "
+        "și cât scade. Folosește rezultatul ca să completezi câmpurile de preț "
+        "din CSV sau din formularul manual."
+    )
+
+    col1, col2 = st.columns(2)
+    current_price = col1.number_input(
+        "Preț curent (lei)", min_value=0.0, step=0.01, format="%.2f", key="calc_current_price"
+    )
+    percent = col2.number_input(
+        "Procent reducere (%)", min_value=0.0, max_value=100.0, step=1.0, format="%.0f", key="calc_percent"
+    )
+
+    if current_price > 0 and percent > 0:
+        discount_amount = current_price * percent / 100
+        new_price = current_price - discount_amount
+
+        st.divider()
+        c1, c2, c3 = st.columns(3)
+        c1.metric("Preț curent", f"{current_price:.2f} lei")
+        c2.metric("Reducere", f"-{discount_amount:.2f} lei")
+        c3.metric("Preț nou", f"{new_price:.2f} lei")
+    else:
+        st.info("Completează ambele câmpuri pentru a vedea rezultatul.")
