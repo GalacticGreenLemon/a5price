@@ -176,6 +176,117 @@ def generate_zip(data_rows):
     return zip_buffer, count
 
 
+# A4/A5 landscape at 300 DPI. The label is drawn upright (as normal), then rotated
+# 90° so the red banner ends up on the left edge and all text reads bottom-to-top —
+# matching a shelf-strip style tag meant to be read with the page turned sideways.
+PAGE_SIZES_PX = {
+    "a4": (3508, 2481),
+    "a5": (2481, 1748),
+}
+PAGE_MARGIN_PX = 100
+
+try:
+    RESAMPLE = Image.Resampling.LANCZOS
+except AttributeError:  # older Pillow versions
+    RESAMPLE = Image.LANCZOS
+
+
+def render_single_page(row, fmt):
+    """Draws one product's label, rotates it 90°, and centers it on an A4 or A5 landscape page."""
+    label_img = Image.new('RGB', (800, 1100), color=(255, 255, 255))
+    draw = ImageDraw.Draw(label_img)
+    draw_label(draw, label_img, row, 0)
+
+    rotated = label_img.rotate(90, expand=True)
+
+    page_w, page_h = PAGE_SIZES_PX[fmt]
+    max_w = page_w - 2 * PAGE_MARGIN_PX
+    max_h = page_h - 2 * PAGE_MARGIN_PX
+    scale = min(max_w / rotated.width, max_h / rotated.height)
+    new_size = (int(rotated.width * scale), int(rotated.height * scale))
+    resized = rotated.resize(new_size, RESAMPLE)
+
+    page = Image.new('RGB', (page_w, page_h), color=(255, 255, 255))
+    paste_x = (page_w - new_size[0]) // 2
+    paste_y = (page_h - new_size[1]) // 2
+    page.paste(resized, (paste_x, paste_y))
+    return page
+
+
+def get_row_format(row):
+    """Reads the optional 'Format' column: 'a4' or 'a5' means one rotated page for that
+    row; anything else (blank, 'normal', missing column entirely) means the normal 2-up layout."""
+    fmt = (row.get("Format") or "").strip().lower()
+    if fmt in ("a4", "a5"):
+        return fmt
+    return "normal"
+
+
+def generate_zip_from_csv(data_rows):
+    """
+    Builds the output zip respecting each row's own 'Format' column, so a single CSV
+    can mix normal 2-up labels with A4/A5 single-page labels in the same file.
+    """
+    zip_buffer = io.BytesIO()
+    count = 0
+    with zipfile.ZipFile(zip_buffer, "w") as zipf:
+        i = 0
+        n = len(data_rows)
+        while i < n:
+            row = data_rows[i]
+            fmt = get_row_format(row)
+
+            if fmt in ("a4", "a5"):
+                page = render_single_page(row, fmt)
+                output_filename = f"{row['BarcodeNum'][-4:]}_{fmt.upper()}.png"
+                buf = io.BytesIO()
+                page.save(buf, format="PNG")
+                zipf.writestr(output_filename, buf.getvalue())
+                count += 1
+                i += 1
+            else:
+                img = Image.new('RGB', (1600, 1100), color=(255, 255, 255))
+                draw = ImageDraw.Draw(img)
+                draw_label(draw, img, row, 0)
+                output_filename = row['BarcodeNum'][-4:]
+
+                # Only pair with the next row if it's also a "normal" row —
+                # an A4/A5 row never gets combined onto a shared page.
+                if i + 1 < n and get_row_format(data_rows[i + 1]) == "normal":
+                    draw_label(draw, img, data_rows[i + 1], 800)
+                    draw.line([800, 0, 800, 1100], fill=(200, 200, 200), width=2)
+                    output_filename += f"-{data_rows[i + 1]['BarcodeNum'][-4:]}"
+                    i += 2
+                else:
+                    i += 1
+
+                output_filename += ".png"
+                buf = io.BytesIO()
+                img.save(buf, format="PNG")
+                zipf.writestr(output_filename, buf.getvalue())
+                count += 1
+
+    zip_buffer.seek(0)
+    return zip_buffer, count
+
+
+def generate_single_format_zip(data_rows, fmt):
+    """Used by the manual tab: applies one format (a4/a5) to every product in the list."""
+    zip_buffer = io.BytesIO()
+    count = 0
+    with zipfile.ZipFile(zip_buffer, "w") as zipf:
+        for row in data_rows:
+            page = render_single_page(row, fmt)
+            output_filename = f"{row['BarcodeNum'][-4:]}_{fmt.upper()}.png"
+            buf = io.BytesIO()
+            page.save(buf, format="PNG")
+            zipf.writestr(output_filename, buf.getvalue())
+            count += 1
+    zip_buffer.seek(0)
+    return zip_buffer, count
+
+
+
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
@@ -264,6 +375,75 @@ def validate_product(p, pricing_type):
 
 
 # ---------------------------------------------------------------------------
+# Sample CSV, for people who don't have one yet
+# ---------------------------------------------------------------------------
+CSV_FIELDNAMES = [
+    "Name", "Percentage", "OldPrice_m2", "NewPrice_m2",
+    "OldPrice_piece", "NewPrice_piece", "BarcodeNum", "ProductCode",
+    "StatusText", "Format",
+]
+
+SAMPLE_ROWS = [
+    {
+        "Name": "Robinet Bucătărie Model X",
+        "Percentage": "20",
+        "OldPrice_m2": "",
+        "NewPrice_m2": "",
+        "OldPrice_piece": "45,00",
+        "NewPrice_piece": "36,00",
+        "BarcodeNum": "5901234123457",
+        "ProductCode": "ROB-1001",
+        "StatusText": "Stoc limitat",
+        "Format": "normal",
+    },
+    {
+        "Name": "Chiuvetă Baie Ceramică",
+        "Percentage": "15",
+        "OldPrice_m2": "",
+        "NewPrice_m2": "",
+        "OldPrice_piece": "129,99",
+        "NewPrice_piece": "110,49",
+        "BarcodeNum": "5901234987654",
+        "ProductCode": "CHI-2050",
+        "StatusText": "",
+        "Format": "normal",
+    },
+    {
+        "Name": "Parchet Laminat Zambak, 10mm, ac4, 1.59 m2/cutie",
+        "Percentage": "30",
+        "OldPrice_m2": "89,00",
+        "NewPrice_m2": "62,30",
+        "OldPrice_piece": "",
+        "NewPrice_piece": "99,06",
+        "BarcodeNum": "5904762005199",
+        "ProductCode": "PAR-4521",
+        "StatusText": "Lichidare de stoc",
+        "Format": "A4",
+    },
+    {
+        "Name": "Gresie Porțelanată 60x60",
+        "Percentage": "25",
+        "OldPrice_m2": "69,00",
+        "NewPrice_m2": "51,75",
+        "OldPrice_piece": "",
+        "NewPrice_piece": "186,30",
+        "BarcodeNum": "5901112223334",
+        "ProductCode": "GRE-3311",
+        "StatusText": "",
+        "Format": "A5",
+    },
+]
+
+
+def build_sample_csv():
+    buf = io.StringIO()
+    writer = csv.DictWriter(buf, fieldnames=CSV_FIELDNAMES)
+    writer.writeheader()
+    writer.writerows(SAMPLE_ROWS)
+    return buf.getvalue()
+
+
+# ---------------------------------------------------------------------------
 # UI
 # ---------------------------------------------------------------------------
 st.set_page_config(page_title="Generator etichete preț", page_icon="🏷️")
@@ -275,6 +455,32 @@ tab_csv, tab_manual, tab_calc = st.tabs(["📄 Din fișier CSV", "✍️ Adaugă
 # ---- Tab 1: existing CSV upload flow --------------------------------------
 with tab_csv:
     st.write("Pentru cine primește fișierul cu toate produsele deja pregătit.")
+
+    st.download_button(
+        label="⬇️ Descarcă un exemplu de data.csv",
+        data=build_sample_csv(),
+        file_name="sample_data.csv",
+        mime="text/csv",
+        key="download_sample_csv",
+    )
+
+    with st.expander("ℹ️ Ce trebuie să conțină fișierul CSV"):
+        st.markdown(
+            """
+Coloanele așteptate: `Name`, `Percentage`, `OldPrice_m2`, `NewPrice_m2`, `OldPrice_piece`,
+`NewPrice_piece`, `BarcodeNum`, `ProductCode`, `StatusText`, `Format`.
+
+**Coloana `Format`** decide cum arată pagina pentru fiecare produs în parte — poți amesteca
+tipuri diferite în același fișier:
+- **goală sau `normal`** — eticheta obișnuită, 2 pe o pagină (comportamentul de până acum).
+- **`A4`** — o singură etichetă pe pagină, format A4, rotită (ca eticheta tip "raft").
+- **`A5`** — la fel, dar pe pagină A4 mai mică, A5.
+
+Rândurile cu `A4` sau `A5` primesc mereu o pagină doar pentru ele; doar rândurile `normal`
+consecutive se combină câte două pe o pagină.
+            """
+        )
+
     uploaded_file = st.file_uploader("Alege fișierul CSV", type=["csv"])
 
     if uploaded_file is not None:
@@ -286,7 +492,7 @@ with tab_csv:
 
             if st.button("Generează etichetele", type="primary", key="generate_csv"):
                 with st.spinner("Se generează imaginile..."):
-                    zip_buffer, count = generate_zip(data_rows)
+                    zip_buffer, count = generate_zip_from_csv(data_rows)
                 st.success(f"Gata! {count} imagini generate.")
                 st.download_button(
                     label="⬇️ Descarcă arhiva ZIP",
@@ -471,9 +677,23 @@ Dacă un câmp e completat greșit, aplicația îți va arăta exact ce trebuie 
                 st.rerun()
 
         st.divider()
+        manual_format = st.radio(
+            "Format etichete",
+            [
+                "Normal (2 etichete pe pagină)",
+                "A4 (o etichetă pe pagină, rotită)",
+                "A5 (o etichetă pe pagină, rotită)",
+            ],
+            key="manual_format",
+        )
         if st.button("Generează etichetele", type="primary", key="generate_manual"):
             with st.spinner("Se generează imaginile..."):
-                zip_buffer, count = generate_zip(st.session_state.manual_products)
+                if manual_format.startswith("A4"):
+                    zip_buffer, count = generate_single_format_zip(st.session_state.manual_products, "a4")
+                elif manual_format.startswith("A5"):
+                    zip_buffer, count = generate_single_format_zip(st.session_state.manual_products, "a5")
+                else:
+                    zip_buffer, count = generate_zip(st.session_state.manual_products)
             st.success(f"Gata! {count} imagini generate.")
             st.download_button(
                 label="⬇️ Descarcă arhiva ZIP",
