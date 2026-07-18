@@ -683,6 +683,12 @@ Dacă un câmp e completat greșit, aplicația îți va arăta exact ce trebuie 
 
         n_products = len(st.session_state.manual_products)
 
+        def _select_range_callback():
+            lo = min(st.session_state.get("m_range_start", 1), st.session_state.get("m_range_end", n_products))
+            hi = max(st.session_state.get("m_range_start", 1), st.session_state.get("m_range_end", n_products))
+            for i in range(n_products):
+                st.session_state[f"chk_{i}"] = lo <= (i + 1) <= hi
+
         top_cols = st.columns([1.3, 1.5, 1.5, 2])
         top_cols[0].checkbox("Selectează tot", key="chk_select_all", on_change=_select_all_callback)
         range_start = top_cols[1].number_input(
@@ -691,11 +697,7 @@ Dacă un câmp e completat greșit, aplicația îți va arăta exact ce trebuie 
         range_end = top_cols[2].number_input(
             "Până la #", min_value=1, max_value=n_products, value=n_products, step=1, key="m_range_end"
         )
-        if top_cols[3].button("Selectează intervalul"):
-            lo, hi = min(range_start, range_end), max(range_start, range_end)
-            for i in range(n_products):
-                st.session_state[f"chk_{i}"] = lo <= (i + 1) <= hi
-            st.rerun()
+        top_cols[3].button("Selectează intervalul", on_click=_select_range_callback)
 
         for idx, p in enumerate(st.session_state.manual_products):
             cols = st.columns([0.4, 0.4, 4.2, 1])
@@ -715,7 +717,8 @@ Dacă un câmp e completat greșit, aplicația îți va arăta exact ce trebuie 
                     key = f"chk_{i}"
                     if key in st.session_state:
                         del st.session_state[key]
-                st.session_state["chk_select_all"] = False
+                if "chk_select_all" in st.session_state:
+                    del st.session_state["chk_select_all"]
                 for k in ("m_range_start", "m_range_end"):
                     if k in st.session_state:
                         del st.session_state[k]
@@ -735,17 +738,19 @@ Dacă un câmp e completat greșit, aplicația îți va arăta exact ce trebuie 
                 key = f"chk_{i}"
                 if key in st.session_state:
                     del st.session_state[key]
-            st.session_state["chk_select_all"] = False
+            if "chk_select_all" in st.session_state:
+                del st.session_state["chk_select_all"]
             for k in ("m_range_start", "m_range_end"):
                 if k in st.session_state:
                     del st.session_state[k]
             st.success(f"{len(selected_indices)} produse șterse.")
             st.rerun()
-        if bulk_cols[1].button("Deselectează tot", key="deselect_all"):
+        def _deselect_all_callback():
             for i in range(n_products):
                 st.session_state[f"chk_{i}"] = False
             st.session_state["chk_select_all"] = False
-            st.rerun()
+
+        bulk_cols[1].button("Deselectează tot", key="deselect_all", on_click=_deselect_all_callback)
 
         st.divider()
         if st.button("Generează etichetele", type="primary", key="generate_manual"):
