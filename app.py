@@ -29,22 +29,40 @@ LS_KEY = "manual_products_cache"
 
 
 def load_cached_products():
-    raw = localS.getItem(LS_KEY, key="get_manual_products_cache")
+    try:
+        raw = localS.getItem(LS_KEY, key="get_manual_products_cache")
+    except Exception:
+        # If the browser-storage component misbehaves for any reason, don't
+        # bring down the whole app — just start with an empty list this run.
+        return []
+
     # The browser component needs a round trip to resolve; if it hasn't
     # come back yet, rerun once so we don't miss data that's actually there.
     if raw is None and not st.session_state.get("_ls_checked"):
         st.session_state["_ls_checked"] = True
         st.rerun()
-    try:
-        return json.loads(raw) if raw else []
-    except (json.JSONDecodeError, TypeError):
+
+    if not raw:
         return []
+    if isinstance(raw, list):
+        return raw
+    if isinstance(raw, str):
+        try:
+            return json.loads(raw)
+        except (json.JSONDecodeError, TypeError, ValueError):
+            return []
+    return []
 
 
 def save_cached_products(products):
-    localS.setItem(
-        LS_KEY, json.dumps(products, ensure_ascii=False), key="set_manual_products_cache"
-    )
+    try:
+        localS.setItem(
+            LS_KEY, json.dumps(products, ensure_ascii=False), key="set_manual_products_cache"
+        )
+    except Exception:
+        # Saving is best-effort — a failed browser-storage write shouldn't
+        # interrupt whatever the user was doing (add/delete/etc.).
+        pass
 
 
 def get_font(path, size):
