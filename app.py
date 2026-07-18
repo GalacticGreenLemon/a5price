@@ -551,6 +551,15 @@ Dacă un câmp e completat greșit, aplicația îți va arăta exact ce trebuie 
         percentage = st.text_input("Procent reducere (%) *", placeholder="ex: 20", key="m_percentage")
         pricing_type = st.radio("Tip preț *", ["Preț pe bucată", "Preț pe m² + cutie"], key="m_pricing_type")
 
+        page_format = st.radio(
+            "Format pagină *",
+            [
+                "Normal (2 pe pagină A4 — devine A5 dacă tai pagina în două)",
+                "A4 (o etichetă mare, rotită, pe toată pagina)",
+            ],
+            key="m_page_format",
+        )
+
         manual_calc = st.checkbox(
             "Prefer să calculez eu prețul nou (fără calcul automat)", key="m_manual_calc"
         )
@@ -642,6 +651,7 @@ Dacă un câmp e completat greșit, aplicația îți va arăta exact ce trebuie 
                 "BarcodeNum": barcode_num.strip(),
                 "ProductCode": product_code.strip(),
                 "StatusText": status_text.strip(),
+                "Format": "a4" if page_format.startswith("A4") else "normal",
             }
             errors = validate_product(candidate, pricing_type)
             if errors:
@@ -665,32 +675,82 @@ Dacă un câmp e completat greșit, aplicația îți va arăta exact ce trebuie 
 
     if st.session_state.manual_products:
         st.subheader("Produse adăugate")
+
+        def _select_all_callback():
+            val = st.session_state.get("chk_select_all", False)
+            for i in range(len(st.session_state.manual_products)):
+                st.session_state[f"chk_{i}"] = val
+
+        n_products = len(st.session_state.manual_products)
+
+        top_cols = st.columns([1.3, 1.5, 1.5, 2])
+        top_cols[0].checkbox("Selectează tot", key="chk_select_all", on_change=_select_all_callback)
+        range_start = top_cols[1].number_input(
+            "De la #", min_value=1, max_value=n_products, value=1, step=1, key="m_range_start"
+        )
+        range_end = top_cols[2].number_input(
+            "Până la #", min_value=1, max_value=n_products, value=n_products, step=1, key="m_range_end"
+        )
+        if top_cols[3].button("Selectează intervalul"):
+            lo, hi = min(range_start, range_end), max(range_start, range_end)
+            for i in range(n_products):
+                st.session_state[f"chk_{i}"] = lo <= (i + 1) <= hi
+            st.rerun()
+
         for idx, p in enumerate(st.session_state.manual_products):
-            cols = st.columns([5, 1])
+            cols = st.columns([0.4, 0.4, 4.2, 1])
+            cols[0].write(f"**{idx + 1}.**")
+            cols[1].checkbox("", key=f"chk_{idx}", label_visibility="collapsed")
             if p["OldPrice_piece"]:
                 price_label = f"{p['NewPrice_piece']} lei/buc"
             else:
                 price_label = f"{p['NewPrice_m2']} lei/m²"
-            cols[0].write(f"**{p['Name']}** — {price_label} (-{p['Percentage']}%) — cod: {p['ProductCode']}")
-            if cols[1].button("🗑️ Șterge", key=f"del_{idx}"):
+            format_tag = " 📄 A4" if p.get("Format") == "a4" else ""
+            cols[2].write(
+                f"**{p['Name']}** — {price_label} (-{p['Percentage']}%) — cod: {p['ProductCode']}{format_tag}"
+            )
+            if cols[3].button("🗑️", key=f"del_{idx}"):
                 st.session_state.manual_products.pop(idx)
+                for i in range(n_products):
+                    key = f"chk_{i}"
+                    if key in st.session_state:
+                        del st.session_state[key]
+                st.session_state["chk_select_all"] = False
+                for k in ("m_range_start", "m_range_end"):
+                    if k in st.session_state:
+                        del st.session_state[k]
                 st.rerun()
 
+        selected_indices = [i for i in range(n_products) if st.session_state.get(f"chk_{i}", False)]
+
+        bulk_cols = st.columns(2)
+        if bulk_cols[0].button(
+            f"🗑️ Șterge selectate ({len(selected_indices)})",
+            disabled=not selected_indices,
+            key="delete_selected",
+        ):
+            for i in sorted(selected_indices, reverse=True):
+                st.session_state.manual_products.pop(i)
+            for i in range(n_products):
+                key = f"chk_{i}"
+                if key in st.session_state:
+                    del st.session_state[key]
+            st.session_state["chk_select_all"] = False
+            for k in ("m_range_start", "m_range_end"):
+                if k in st.session_state:
+                    del st.session_state[k]
+            st.success(f"{len(selected_indices)} produse șterse.")
+            st.rerun()
+        if bulk_cols[1].button("Deselectează tot", key="deselect_all"):
+            for i in range(n_products):
+                st.session_state[f"chk_{i}"] = False
+            st.session_state["chk_select_all"] = False
+            st.rerun()
+
         st.divider()
-        manual_format = st.radio(
-            "Format etichete",
-            [
-                "Normal (2 etichete pe pagină)",
-                "A4 (o etichetă pe pagină, rotită)",
-            ],
-            key="manual_format",
-        )
         if st.button("Generează etichetele", type="primary", key="generate_manual"):
             with st.spinner("Se generează imaginile..."):
-                if manual_format.startswith("A4"):
-                    zip_buffer, count = generate_single_format_zip(st.session_state.manual_products, "a4")
-                else:
-                    zip_buffer, count = generate_zip(st.session_state.manual_products)
+                zip_buffer, count = generate_zip_from_csv(st.session_state.manual_products)
             st.success(f"Gata! {count} imagini generate.")
             st.download_button(
                 label="⬇️ Descarcă arhiva ZIP",
