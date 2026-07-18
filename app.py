@@ -1,5 +1,6 @@
 import csv
 import io
+import json
 import os
 import re
 import zipfile
@@ -14,6 +15,30 @@ from barcode.writer import ImageWriter
 # ---------------------------------------------------------------------------
 FONT_REGULAR = "Roboto-Regular.ttf"
 FONT_BOLD = "Roboto-Bold.ttf"
+
+# ---------------------------------------------------------------------------
+# Simple on-disk cache so the manually-added product list survives a page
+# refresh (a refresh starts a brand-new Streamlit session, which normally
+# wipes st.session_state). Note this lives on the app server's disk, so it
+# will still be cleared if the app reboots or redeploys.
+# ---------------------------------------------------------------------------
+CACHE_FILE = "manual_products_cache.json"
+
+
+def load_cached_products():
+    try:
+        with open(CACHE_FILE, "r", encoding="utf-8") as f:
+            return json.load(f)
+    except (FileNotFoundError, json.JSONDecodeError):
+        return []
+
+
+def save_cached_products(products):
+    try:
+        with open(CACHE_FILE, "w", encoding="utf-8") as f:
+            json.dump(products, f, ensure_ascii=False)
+    except OSError:
+        pass
 
 
 def get_font(path, size):
@@ -529,7 +554,7 @@ Dacă un câmp e completat greșit, aplicația îți va arăta exact ce trebuie 
         )
 
     if "manual_products" not in st.session_state:
-        st.session_state.manual_products = []
+        st.session_state.manual_products = load_cached_products()
 
     MAX_PRODUCTS = 20
     remaining = MAX_PRODUCTS - len(st.session_state.manual_products)
@@ -661,6 +686,7 @@ Dacă un câmp e completat greșit, aplicația îți va arăta exact ce trebuie 
                 )
             else:
                 st.session_state.manual_products.append(candidate)
+                save_cached_products(st.session_state.manual_products)
                 for k in [
                     "m_name", "m_percentage", "m_old_piece", "m_new_piece_manual",
                     "m_old_m2", "m_new_m2_manual", "m_new_piece_box", "m_manual_box",
@@ -713,6 +739,7 @@ Dacă un câmp e completat greșit, aplicația îți va arăta exact ce trebuie 
             )
             if cols[3].button("🗑️", key=f"del_{idx}"):
                 st.session_state.manual_products.pop(idx)
+                save_cached_products(st.session_state.manual_products)
                 for i in range(n_products):
                     key = f"chk_{i}"
                     if key in st.session_state:
@@ -734,6 +761,7 @@ Dacă un câmp e completat greșit, aplicația îți va arăta exact ce trebuie 
         ):
             for i in sorted(selected_indices, reverse=True):
                 st.session_state.manual_products.pop(i)
+            save_cached_products(st.session_state.manual_products)
             for i in range(n_products):
                 key = f"chk_{i}"
                 if key in st.session_state:
