@@ -411,7 +411,9 @@ def validate_product(p, pricing_type):
         except ValueError:
             errors.append("Procentul trebuie să fie un număr, fără text (ex: 20, 20% sau -20).")
 
-    if pricing_type == "Preț pe bucată":
+    if pricing_type is None:
+        errors.append("Trebuie să alegi tipul de preț (pe bucată sau pe m²).")
+    elif pricing_type == "Preț pe bucată":
         if not p["OldPrice_piece"].strip():
             errors.append("Prețul vechi (lei/buc) este obligatoriu.")
         if not p["NewPrice_piece"].strip():
@@ -610,7 +612,12 @@ Dacă un câmp e completat greșit, aplicația îți va arăta exact ce trebuie 
 
         name = st.text_input("Nume produs *", key="m_name")
         percentage = st.text_input("Procent reducere (%) *", placeholder="ex: 20", key="m_percentage")
-        pricing_type = st.radio("Tip preț *", ["Preț pe bucată", "Preț pe m² + cutie"], key="m_pricing_type")
+        pricing_type = st.radio(
+            "Tip preț *",
+            ["Preț pe bucată", "Preț pe m² + cutie"],
+            index=None,
+            key="m_pricing_type",
+        )
 
         page_format = st.radio(
             "Format pagină *",
@@ -627,7 +634,13 @@ Dacă un câmp e completat greșit, aplicația îți va arăta exact ce trebuie 
         auto_calc = not manual_calc
 
         col1, col2 = st.columns(2)
-        if pricing_type == "Preț pe bucată":
+        if pricing_type is None:
+            st.info("⬆️ Alege mai întâi tipul de preț pentru a completa restul câmpurilor.")
+            old_piece = ""
+            new_piece = ""
+            old_m2 = ""
+            new_m2 = ""
+        elif pricing_type == "Preț pe bucată":
             old_piece = col1.text_input("Preț vechi (lei/buc) *", placeholder="ex: 45,00", key="m_old_piece")
             old_m2 = ""
             new_m2 = ""
@@ -729,7 +742,7 @@ Dacă un câmp e completat greșit, aplicația îți va arăta exact ce trebuie 
                 st.session_state.manual_products.append(candidate)
                 save_cached_products(st.session_state.manual_products)
                 for k in [
-                    "m_name", "m_percentage", "m_old_piece", "m_new_piece_manual",
+                    "m_name", "m_percentage", "m_pricing_type", "m_old_piece", "m_new_piece_manual",
                     "m_old_m2", "m_new_m2_manual", "m_new_piece_box", "m_manual_box",
                     "m_barcode", "m_product_code", "m_status", "m_quantity",
                 ]:
