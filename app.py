@@ -176,12 +176,13 @@ def generate_zip(data_rows):
     return zip_buffer, count
 
 
-# A4/A5 landscape at 300 DPI. The label is drawn upright (as normal), then rotated
+# A4 landscape at 300 DPI. The label is drawn upright (as normal), then rotated
 # 90° so the red banner ends up on the left edge and all text reads bottom-to-top —
 # matching a shelf-strip style tag meant to be read with the page turned sideways.
+# (A5 isn't a separate format here: the normal 2-up layout already IS A5-sized once
+# an A4 sheet is cut in half down the middle — that's the whole reason it's 2-per-page.)
 PAGE_SIZES_PX = {
     "a4": (3508, 2481),
-    "a5": (2481, 1748),
 }
 PAGE_MARGIN_PX = 100
 
@@ -192,7 +193,7 @@ except AttributeError:  # older Pillow versions
 
 
 def render_single_page(row, fmt):
-    """Draws one product's label, rotates it 90°, and centers it on an A4 or A5 landscape page."""
+    """Draws one product's label, rotates it 90°, and centers it on an A4 landscape page."""
     label_img = Image.new('RGB', (800, 1100), color=(255, 255, 255))
     draw = ImageDraw.Draw(label_img)
     draw_label(draw, label_img, row, 0)
@@ -214,10 +215,10 @@ def render_single_page(row, fmt):
 
 
 def get_row_format(row):
-    """Reads the optional 'Format' column: 'a4' or 'a5' means one rotated page for that
-    row; anything else (blank, 'normal', missing column entirely) means the normal 2-up layout."""
+    """Reads the optional 'Format' column: 'a4' means one rotated page for that row;
+    anything else (blank, 'normal', missing column entirely) means the normal 2-up layout."""
     fmt = (row.get("Format") or "").strip().lower()
-    if fmt in ("a4", "a5"):
+    if fmt == "a4":
         return fmt
     return "normal"
 
@@ -225,7 +226,7 @@ def get_row_format(row):
 def generate_zip_from_csv(data_rows):
     """
     Builds the output zip respecting each row's own 'Format' column, so a single CSV
-    can mix normal 2-up labels with A4/A5 single-page labels in the same file.
+    can mix normal 2-up labels with A4 single-page labels in the same file.
     """
     zip_buffer = io.BytesIO()
     count = 0
@@ -236,7 +237,7 @@ def generate_zip_from_csv(data_rows):
             row = data_rows[i]
             fmt = get_row_format(row)
 
-            if fmt in ("a4", "a5"):
+            if fmt == "a4":
                 page = render_single_page(row, fmt)
                 output_filename = f"{row['BarcodeNum'][-4:]}_{fmt.upper()}.png"
                 buf = io.BytesIO()
@@ -251,7 +252,7 @@ def generate_zip_from_csv(data_rows):
                 output_filename = row['BarcodeNum'][-4:]
 
                 # Only pair with the next row if it's also a "normal" row —
-                # an A4/A5 row never gets combined onto a shared page.
+                # an A4 row never gets combined onto a shared page.
                 if i + 1 < n and get_row_format(data_rows[i + 1]) == "normal":
                     draw_label(draw, img, data_rows[i + 1], 800)
                     draw.line([800, 0, 800, 1100], fill=(200, 200, 200), width=2)
@@ -271,7 +272,7 @@ def generate_zip_from_csv(data_rows):
 
 
 def generate_single_format_zip(data_rows, fmt):
-    """Used by the manual tab: applies one format (a4/a5) to every product in the list."""
+    """Used by the manual tab: renders every product as its own rotated A4 page."""
     zip_buffer = io.BytesIO()
     count = 0
     with zipfile.ZipFile(zip_buffer, "w") as zipf:
@@ -430,7 +431,7 @@ SAMPLE_ROWS = [
         "BarcodeNum": "5901112223334",
         "ProductCode": "GRE-3311",
         "StatusText": "",
-        "Format": "A5",
+        "Format": "normal",
     },
 ]
 
@@ -472,11 +473,10 @@ Coloanele așteptate: `Name`, `Percentage`, `OldPrice_m2`, `NewPrice_m2`, `OldPr
 
 **Coloana `Format`** decide cum arată pagina pentru fiecare produs în parte — poți amesteca
 tipuri diferite în același fișier:
-- **goală sau `normal`** — eticheta obișnuită, 2 pe o pagină (comportamentul de până acum).
-- **`A4`** — o singură etichetă pe pagină, format A4, rotită (ca eticheta tip "raft").
-- **`A5`** — la fel, dar pe pagină A4 mai mică, A5.
+- **goală sau `normal`** — eticheta obișnuită, 2 pe o pagină A4 (comportamentul de până acum). Dacă tai pagina în două, fiecare jumătate e deja mărime A5 — nu e nevoie de un format separat pentru asta.
+- **`A4`** — o singură etichetă mare, rotită, pe toată pagina A4 (ca eticheta tip "raft").
 
-Rândurile cu `A4` sau `A5` primesc mereu o pagină doar pentru ele; doar rândurile `normal`
+Rândurile cu `A4` primesc mereu o pagină doar pentru ele; doar rândurile `normal`
 consecutive se combină câte două pe o pagină.
             """
         )
@@ -682,7 +682,6 @@ Dacă un câmp e completat greșit, aplicația îți va arăta exact ce trebuie 
             [
                 "Normal (2 etichete pe pagină)",
                 "A4 (o etichetă pe pagină, rotită)",
-                "A5 (o etichetă pe pagină, rotită)",
             ],
             key="manual_format",
         )
@@ -690,8 +689,6 @@ Dacă un câmp e completat greșit, aplicația îți va arăta exact ce trebuie 
             with st.spinner("Se generează imaginile..."):
                 if manual_format.startswith("A4"):
                     zip_buffer, count = generate_single_format_zip(st.session_state.manual_products, "a4")
-                elif manual_format.startswith("A5"):
-                    zip_buffer, count = generate_single_format_zip(st.session_state.manual_products, "a5")
                 else:
                     zip_buffer, count = generate_zip(st.session_state.manual_products)
             st.success(f"Gata! {count} imagini generate.")
