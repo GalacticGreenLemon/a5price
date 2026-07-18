@@ -1,3 +1,4 @@
 streamlit
 pillow
 python-barcode
+streamlit-local-storage
