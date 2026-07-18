@@ -255,6 +255,18 @@ def generate_zip_from_csv(data_rows):
     """
     zip_buffer = io.BytesIO()
     count = 0
+    used_names = {}
+
+    def _unique_name(base_name):
+        """Appends -2, -3, ... if base_name was already used, so duplicate labels
+        (e.g. from a Quantity > 1) don't overwrite each other inside the zip."""
+        if base_name not in used_names:
+            used_names[base_name] = 1
+            return base_name
+        used_names[base_name] += 1
+        stem, ext = os.path.splitext(base_name)
+        return f"{stem}-{used_names[base_name]}{ext}"
+
     with zipfile.ZipFile(zip_buffer, "w") as zipf:
         i = 0
         n = len(data_rows)
@@ -264,7 +276,7 @@ def generate_zip_from_csv(data_rows):
 
             if fmt == "a4":
                 page = render_single_page(row, fmt)
-                output_filename = f"{row['BarcodeNum'][-4:]}_{fmt.upper()}.png"
+                output_filename = _unique_name(f"{row['BarcodeNum'][-4:]}_{fmt.upper()}.png")
                 buf = io.BytesIO()
                 page.save(buf, format="PNG")
                 zipf.writestr(output_filename, buf.getvalue())
@@ -286,7 +298,7 @@ def generate_zip_from_csv(data_rows):
                 else:
                     i += 1
 
-                output_filename += ".png"
+                output_filename = _unique_name(output_filename + ".png")
                 buf = io.BytesIO()
                 img.save(buf, format="PNG")
                 zipf.writestr(output_filename, buf.getvalue())
@@ -664,6 +676,10 @@ Dacă un câmp e completat greșit, aplicația îți va arăta exact ce trebuie 
         barcode_num = st.text_input("Cod de bare (EAN) *", placeholder="ex: 5901234123457", key="m_barcode")
         product_code = st.text_input("Cod produs *", placeholder="ex: GRE-4521", key="m_product_code")
         status_text = st.text_input("Text status — opțional", placeholder="ex: Stoc limitat", key="m_status")
+        quantity = st.number_input(
+            "Câte etichete identice? (ex: 4 dacă vrei aceeași etichetă de 4 ori)",
+            min_value=1, max_value=100, value=1, step=1, key="m_quantity",
+        )
 
         if st.button("➕ Adaugă în listă", key="add_product_btn"):
             candidate = {
@@ -677,6 +693,7 @@ Dacă un câmp e completat greșit, aplicația îți va arăta exact ce trebuie 
                 "ProductCode": product_code.strip(),
                 "StatusText": status_text.strip(),
                 "Format": "a4" if page_format.startswith("A4") else "normal",
+                "Quantity": int(quantity),
             }
             errors = validate_product(candidate, pricing_type)
             if errors:
@@ -690,7 +707,7 @@ Dacă un câmp e completat greșit, aplicația îți va arăta exact ce trebuie 
                 for k in [
                     "m_name", "m_percentage", "m_old_piece", "m_new_piece_manual",
                     "m_old_m2", "m_new_m2_manual", "m_new_piece_box", "m_manual_box",
-                    "m_barcode", "m_product_code", "m_status",
+                    "m_barcode", "m_product_code", "m_status", "m_quantity",
                 ]:
                     if k in st.session_state:
                         del st.session_state[k]
@@ -725,8 +742,16 @@ Dacă un câmp e completat greșit, aplicația îți va arăta exact ce trebuie 
         )
         top_cols[3].button("Selectează intervalul", on_click=_select_range_callback)
 
+        def _make_qty_callback(index):
+            def _cb():
+                new_qty = st.session_state.get(f"qty_{index}")
+                if new_qty and 1 <= new_qty <= 100:
+                    st.session_state.manual_products[index]["Quantity"] = int(new_qty)
+                    save_cached_products(st.session_state.manual_products)
+            return _cb
+
         for idx, p in enumerate(st.session_state.manual_products):
-            cols = st.columns([0.4, 0.4, 4.2, 1])
+            cols = st.columns([0.4, 0.4, 3.5, 0.9, 1])
             cols[0].write(f"**{idx + 1}.**")
             cols[1].checkbox("", key=f"chk_{idx}", label_visibility="collapsed")
             if p["OldPrice_piece"]:
@@ -737,7 +762,16 @@ Dacă un câmp e completat greșit, aplicația îți va arăta exact ce trebuie 
             cols[2].write(
                 f"**{p['Name']}** — {price_label} (-{p['Percentage']}%) — cod: {p['ProductCode']}{format_tag}"
             )
-            if cols[3].button("🗑️", key=f"del_{idx}"):
+            cols[3].number_input(
+                "Buc.",
+                min_value=1, max_value=100,
+                value=int(p.get("Quantity", 1)),
+                step=1,
+                key=f"qty_{idx}",
+                on_change=_make_qty_callback(idx),
+                label_visibility="collapsed",
+            )
+            if cols[4].button("🗑️", key=f"del_{idx}"):
                 st.session_state.manual_products.pop(idx)
                 save_cached_products(st.session_state.manual_products)
                 for i in range(n_products):
@@ -782,8 +816,11 @@ Dacă un câmp e completat greșit, aplicația îți va arăta exact ce trebuie 
 
         st.divider()
         if st.button("Generează etichetele", type="primary", key="generate_manual"):
+            expanded_rows = []
+            for p in st.session_state.manual_products:
+                expanded_rows.extend([p] * int(p.get("Quantity", 1)))
             with st.spinner("Se generează imaginile..."):
-                zip_buffer, count = generate_zip_from_csv(st.session_state.manual_products)
+                zip_buffer, count = generate_zip_from_csv(expanded_rows)
             st.success(f"Gata! {count} imagini generate.")
             st.download_button(
                 label="⬇️ Descarcă arhiva ZIP",
