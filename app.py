@@ -1,3 +1,4 @@
+import base64
 import csv
 import io
 import json
@@ -6,6 +7,7 @@ import re
 import zipfile
 
 import streamlit as st
+import streamlit.components.v1 as components
 from streamlit_local_storage import LocalStorage
 from PIL import Image, ImageDraw, ImageFont
 import barcode
@@ -272,18 +274,18 @@ def get_row_format(row):
     return "normal"
 
 
-def generate_zip_from_csv(data_rows):
+def build_label_files(data_rows):
     """
-    Builds the output zip respecting each row's own 'Format' column, so a single CSV
-    can mix normal 2-up labels with A4 single-page labels in the same file.
+    Renders each label image respecting each row's own 'Format' column, so a single CSV
+    can mix normal 2-up labels with A4 single-page labels in the same file. Returns a
+    list of (filename, png_bytes) tuples — zipping them is a separate, optional step.
     """
-    zip_buffer = io.BytesIO()
-    count = 0
+    files = []
     used_names = {}
 
     def _unique_name(base_name):
         """Appends -2, -3, ... if base_name was already used, so duplicate labels
-        (e.g. from a Quantity > 1) don't overwrite each other inside the zip."""
+        (e.g. from a Quantity > 1) don't overwrite each other."""
         if base_name not in used_names:
             used_names[base_name] = 1
             return base_name
@@ -291,45 +293,87 @@ def generate_zip_from_csv(data_rows):
         stem, ext = os.path.splitext(base_name)
         return f"{stem}-{used_names[base_name]}{ext}"
 
-    with zipfile.ZipFile(zip_buffer, "w") as zipf:
-        i = 0
-        n = len(data_rows)
-        while i < n:
-            row = data_rows[i]
-            fmt = get_row_format(row)
+    i = 0
+    n = len(data_rows)
+    while i < n:
+        row = data_rows[i]
+        fmt = get_row_format(row)
 
-            if fmt == "a4":
-                page = render_single_page(row, fmt)
-                output_filename = _unique_name(f"{row['BarcodeNum'][-4:]}_{fmt.upper()}.png")
-                buf = io.BytesIO()
-                page.save(buf, format="PNG")
-                zipf.writestr(output_filename, buf.getvalue())
-                count += 1
-                i += 1
+        if fmt == "a4":
+            page = render_single_page(row, fmt)
+            output_filename = _unique_name(f"{row['BarcodeNum'][-4:]}_{fmt.upper()}.png")
+            buf = io.BytesIO()
+            page.save(buf, format="PNG")
+            files.append((output_filename, buf.getvalue()))
+            i += 1
+        else:
+            img = Image.new('RGB', (1600, 1100), color=(255, 255, 255))
+            draw = ImageDraw.Draw(img)
+            draw_label(draw, img, row, 0)
+            output_filename = row['BarcodeNum'][-4:]
+
+            # Only pair with the next row if it's also a "normal" row —
+            # an A4 row never gets combined onto a shared page.
+            if i + 1 < n and get_row_format(data_rows[i + 1]) == "normal":
+                draw_label(draw, img, data_rows[i + 1], 800)
+                draw.line([800, 0, 800, 1100], fill=(200, 200, 200), width=2)
+                output_filename += f"-{data_rows[i + 1]['BarcodeNum'][-4:]}"
+                i += 2
             else:
-                img = Image.new('RGB', (1600, 1100), color=(255, 255, 255))
-                draw = ImageDraw.Draw(img)
-                draw_label(draw, img, row, 0)
-                output_filename = row['BarcodeNum'][-4:]
+                i += 1
 
-                # Only pair with the next row if it's also a "normal" row —
-                # an A4 row never gets combined onto a shared page.
-                if i + 1 < n and get_row_format(data_rows[i + 1]) == "normal":
-                    draw_label(draw, img, data_rows[i + 1], 800)
-                    draw.line([800, 0, 800, 1100], fill=(200, 200, 200), width=2)
-                    output_filename += f"-{data_rows[i + 1]['BarcodeNum'][-4:]}"
-                    i += 2
-                else:
-                    i += 1
+            output_filename = _unique_name(output_filename + ".png")
+            buf = io.BytesIO()
+            img.save(buf, format="PNG")
+            files.append((output_filename, buf.getvalue()))
 
-                output_filename = _unique_name(output_filename + ".png")
-                buf = io.BytesIO()
-                img.save(buf, format="PNG")
-                zipf.writestr(output_filename, buf.getvalue())
-                count += 1
+    return files
 
+
+def zip_label_files(files):
+    zip_buffer = io.BytesIO()
+    with zipfile.ZipFile(zip_buffer, "w") as zipf:
+        for filename, data in files:
+            zipf.writestr(filename, data)
     zip_buffer.seek(0)
-    return zip_buffer, count
+    return zip_buffer
+
+
+def build_print_html(files):
+    """
+    Embeds each label image directly in an HTML snippet with a button that
+    calls the browser's native window.print() — this opens the normal OS
+    print dialog, where the user picks whichever printer is connected to
+    their own PC. There's no way for a website to send a job straight to a
+    printer without that dialog; this is the closest a browser allows.
+    """
+    imgs_html = "".join(
+        f'<img src="data:image/png;base64,{base64.b64encode(data).decode()}" '
+        f'style="width:100%; max-width:900px; display:block; margin:0 auto 16px; '
+        f'page-break-after: always; border:1px solid #ddd;" />'
+        for _, data in files
+    )
+    return f"""
+    <div>
+        <button onclick="window.print()"
+                style="padding:10px 18px; font-size:15px; cursor:pointer; margin-bottom:16px;
+                       background:#ff4b4b; color:white; border:none; border-radius:6px;">
+            🖨️ Trimite la imprimantă
+        </button>
+        <div>{imgs_html}</div>
+    </div>
+    <style>
+        @media print {{
+            button {{ display: none; }}
+        }}
+    </style>
+    """
+
+
+def generate_zip_from_csv(data_rows):
+    """Kept for compatibility — builds every label and zips them in one step."""
+    files = build_label_files(data_rows)
+    return zip_label_files(files), len(files)
 
 
 def generate_single_format_zip(data_rows, fmt):
@@ -553,17 +597,39 @@ consecutive se combină câte două pe o pagină.
             data_rows = list(reader)
             st.success(f"Fișier încărcat — {len(data_rows)} produse găsite.")
 
+            want_zip_csv = st.checkbox(
+                "📦 Descarcă toate etichetele într-o arhivă ZIP",
+                value=False,
+                key="want_zip_csv",
+            )
+
             if st.button("Generează etichetele", type="primary", key="generate_csv"):
                 with st.spinner("Se generează imaginile..."):
-                    zip_buffer, count = generate_zip_from_csv(data_rows)
-                st.success(f"Gata! {count} imagini generate.")
-                st.download_button(
-                    label="⬇️ Descarcă arhiva ZIP",
-                    data=zip_buffer,
-                    file_name="generated_labels.zip",
-                    mime="application/zip",
-                    key="download_csv",
-                )
+                    files = build_label_files(data_rows)
+                st.success(f"Gata! {len(files)} imagini generate.")
+                if want_zip_csv:
+                    st.download_button(
+                        label="⬇️ Descarcă arhiva ZIP",
+                        data=zip_label_files(files),
+                        file_name="generated_labels.zip",
+                        mime="application/zip",
+                        key="download_csv",
+                    )
+                else:
+                    for i, (filename, data) in enumerate(files):
+                        st.download_button(
+                            label=f"⬇️ {filename}",
+                            data=data,
+                            file_name=filename,
+                            mime="image/png",
+                            key=f"download_csv_{i}",
+                        )
+
+                with st.expander("🖨️ Printează direct din browser"):
+                    st.caption(
+                        "Se deschide fereastra de printare a browserului — alege acolo imprimanta ta."
+                    )
+                    components.html(build_print_html(files), height=500, scrolling=True)
         except Exception as e:
             st.error(f"A apărut o eroare la citirea fișierului: {e}")
     else:
@@ -594,8 +660,6 @@ Dacă un câmp e completat greșit, aplicația îți va arăta exact ce trebuie 
     if "manual_products" not in st.session_state:
         st.session_state.manual_products = load_cached_products()
 
-    MAX_PRODUCTS = 20
-    remaining = MAX_PRODUCTS - len(st.session_state.manual_products)
 
     def _compute_new_price(old_text, pct_text):
         """Returns the discounted price as a Romanian-style string, or None if inputs aren't valid numbers yet."""
@@ -607,151 +671,148 @@ Dacă un câmp e completat greșit, aplicația îți va arăta exact ce trebuie 
         except (ValueError, AttributeError):
             return None
 
-    if remaining > 0:
-        st.subheader(f"Adaugă produs ({len(st.session_state.manual_products)}/{MAX_PRODUCTS})")
+    st.subheader(f"Adaugă produs ({len(st.session_state.manual_products)} adăugate)")
 
-        name = st.text_input("Nume produs *", key="m_name")
-        percentage = st.text_input("Procent reducere (%) *", placeholder="ex: 20", key="m_percentage")
-        pricing_type = st.radio(
-            "Tip preț *",
-            ["Preț pe bucată", "Preț pe m² + cutie"],
-            index=None,
-            key="m_pricing_type",
-        )
+    name = st.text_input("Nume produs *", key="m_name")
+    percentage = st.text_input("Procent reducere (%) *", placeholder="ex: 20", key="m_percentage")
+    pricing_type = st.radio(
+        "Tip preț *",
+        ["Preț pe bucată", "Preț pe m² + cutie"],
+        index=None,
+        key="m_pricing_type",
+    )
 
-        page_format = st.radio(
-            "Format pagină *",
-            [
-                "Normal (2 pe pagină A4 — devine A5 dacă tai pagina în două)",
-                "A4 (o etichetă mare, rotită, pe toată pagina)",
-            ],
-            key="m_page_format",
-        )
+    page_format = st.radio(
+        "Format pagină *",
+        [
+            "Normal (2 pe pagină A4 — devine A5 dacă tai pagina în două)",
+            "A4 (o etichetă mare, rotită, pe toată pagina)",
+        ],
+        key="m_page_format",
+    )
 
-        manual_calc = st.checkbox(
-            "Prefer să calculez eu prețul nou (fără calcul automat)", key="m_manual_calc"
-        )
-        auto_calc = not manual_calc
+    manual_calc = st.checkbox(
+        "Prefer să calculez eu prețul nou (fără calcul automat)", key="m_manual_calc"
+    )
+    auto_calc = not manual_calc
 
-        col1, col2 = st.columns(2)
-        if pricing_type is None:
-            st.info("⬆️ Alege mai întâi tipul de preț pentru a completa restul câmpurilor.")
-            old_piece = ""
-            new_piece = ""
-            old_m2 = ""
-            new_m2 = ""
-        elif pricing_type == "Preț pe bucată":
-            old_piece = col1.text_input("Preț vechi (lei/buc) *", placeholder="ex: 45,00", key="m_old_piece")
-            old_m2 = ""
-            new_m2 = ""
+    col1, col2 = st.columns(2)
+    if pricing_type is None:
+        st.info("⬆️ Alege mai întâi tipul de preț pentru a completa restul câmpurilor.")
+        old_piece = ""
+        new_piece = ""
+        old_m2 = ""
+        new_m2 = ""
+    elif pricing_type == "Preț pe bucată":
+        old_piece = col1.text_input("Preț vechi (lei/buc) *", placeholder="ex: 45,00", key="m_old_piece")
+        old_m2 = ""
+        new_m2 = ""
 
-            if auto_calc:
-                computed = _compute_new_price(old_piece, percentage)
-                if computed:
-                    col2.text_input(
-                        "Preț nou (lei/buc) — calculat automat", value=computed, disabled=True
-                    )
-                    new_piece = computed
-                else:
-                    col2.info("Completează prețul vechi și procentul pentru calcul automat.")
-                    new_piece = ""
-            else:
-                new_piece = col2.text_input(
-                    "Preț nou (lei/buc) *", placeholder="ex: 36,00", key="m_new_piece_manual"
+        if auto_calc:
+            computed = _compute_new_price(old_piece, percentage)
+            if computed:
+                col2.text_input(
+                    "Preț nou (lei/buc) — calculat automat", value=computed, disabled=True
                 )
+                new_piece = computed
+            else:
+                col2.info("Completează prețul vechi și procentul pentru calcul automat.")
+                new_piece = ""
         else:
-            old_m2 = col1.text_input("Preț vechi (lei/m²) *", placeholder="ex: 89,00", key="m_old_m2")
-            old_piece = ""
+            new_piece = col2.text_input(
+                "Preț nou (lei/buc) *", placeholder="ex: 36,00", key="m_new_piece_manual"
+            )
+    else:
+        old_m2 = col1.text_input("Preț vechi (lei/m²) *", placeholder="ex: 89,00", key="m_old_m2")
+        old_piece = ""
 
-            if auto_calc:
-                computed = _compute_new_price(old_m2, percentage)
-                if computed:
-                    col2.text_input(
-                        "Preț nou (lei/m²) — calculat automat", value=computed, disabled=True
-                    )
-                    new_m2 = computed
-                else:
-                    col2.info("Completează prețul vechi și procentul pentru calcul automat.")
-                    new_m2 = ""
-            else:
-                new_m2 = col2.text_input(
-                    "Preț nou (lei/m²) *", placeholder="ex: 69,00", key="m_new_m2_manual"
+        if auto_calc:
+            computed = _compute_new_price(old_m2, percentage)
+            if computed:
+                col2.text_input(
+                    "Preț nou (lei/m²) — calculat automat", value=computed, disabled=True
                 )
-
-            m2_per_box = parse_m2_per_box(name)
-            manual_box = st.checkbox(
-                "Prefer să calculez eu prețul pe cutie", key="m_manual_box"
+                new_m2 = computed
+            else:
+                col2.info("Completează prețul vechi și procentul pentru calcul automat.")
+                new_m2 = ""
+        else:
+            new_m2 = col2.text_input(
+                "Preț nou (lei/m²) *", placeholder="ex: 69,00", key="m_new_m2_manual"
             )
 
-            if not manual_box and m2_per_box and new_m2:
-                try:
-                    box_val = float(new_m2.strip().replace(",", ".")) * m2_per_box
-                    box_computed = f"{box_val:.2f}".replace(".", ",")
-                    st.text_input(
-                        f"Preț cutie (lei/cutie) — calculat automat ({m2_per_box:g} m²/cutie × preț nou/m²)",
-                        value=box_computed,
-                        disabled=True,
-                    )
-                    new_piece = box_computed
-                except ValueError:
-                    new_piece = st.text_input(
-                        "Preț cutie (lei/cutie) — opțional", placeholder="ex: 249,00", key="m_new_piece_box"
-                    )
-            else:
-                if not manual_box and not m2_per_box:
-                    st.info(
-                        "Nu am găsit o suprafață clară (mp/m2/m²) în numele produsului, așa că "
-                        "prețul cutiei rămâne de completat manual mai jos."
-                    )
+        m2_per_box = parse_m2_per_box(name)
+        manual_box = st.checkbox(
+            "Prefer să calculez eu prețul pe cutie", key="m_manual_box"
+        )
+
+        if not manual_box and m2_per_box and new_m2:
+            try:
+                box_val = float(new_m2.strip().replace(",", ".")) * m2_per_box
+                box_computed = f"{box_val:.2f}".replace(".", ",")
+                st.text_input(
+                    f"Preț cutie (lei/cutie) — calculat automat ({m2_per_box:g} m²/cutie × preț nou/m²)",
+                    value=box_computed,
+                    disabled=True,
+                )
+                new_piece = box_computed
+            except ValueError:
                 new_piece = st.text_input(
                     "Preț cutie (lei/cutie) — opțional", placeholder="ex: 249,00", key="m_new_piece_box"
                 )
-
-        if auto_calc:
-            st.caption("💡 Prețul nou este calculat automat din prețul vechi și procentul de reducere.")
-
-        barcode_num = st.text_input("Cod de bare (EAN) *", placeholder="ex: 5901234123457", key="m_barcode")
-        product_code = st.text_input("Cod produs *", placeholder="ex: GRE-4521", key="m_product_code")
-        status_text = st.text_input("Text status — opțional", placeholder="ex: Stoc limitat", key="m_status")
-        quantity = st.number_input(
-            "Câte etichete identice? (ex: 4 dacă vrei aceeași etichetă de 4 ori)",
-            min_value=1, max_value=100, value=1, step=1, key="m_quantity",
-        )
-
-        if st.button("➕ Adaugă în listă", key="add_product_btn"):
-            candidate = {
-                "Name": name,
-                "Percentage": normalize_percentage(percentage),
-                "OldPrice_m2": old_m2.strip(),
-                "NewPrice_m2": new_m2.strip(),
-                "OldPrice_piece": old_piece.strip(),
-                "NewPrice_piece": new_piece.strip(),
-                "BarcodeNum": barcode_num.strip(),
-                "ProductCode": product_code.strip(),
-                "StatusText": status_text.strip(),
-                "Format": "a4" if page_format.startswith("A4") else "normal",
-                "Quantity": int(quantity),
-            }
-            errors = validate_product(candidate, pricing_type)
-            if errors:
-                st.error(
-                    "Nu am putut adăuga produsul din cauza următoarelor erori:\n\n"
-                    + "\n".join(f"- {e}" for e in errors)
+        else:
+            if not manual_box and not m2_per_box:
+                st.info(
+                    "Nu am găsit o suprafață clară (mp/m2/m²) în numele produsului, așa că "
+                    "prețul cutiei rămâne de completat manual mai jos."
                 )
-            else:
-                st.session_state.manual_products.append(candidate)
-                save_cached_products(st.session_state.manual_products)
-                for k in [
-                    "m_name", "m_percentage", "m_pricing_type", "m_old_piece", "m_new_piece_manual",
-                    "m_old_m2", "m_new_m2_manual", "m_new_piece_box", "m_manual_box",
-                    "m_barcode", "m_product_code", "m_status", "m_quantity",
-                ]:
-                    if k in st.session_state:
-                        del st.session_state[k]
-                st.success(f"„{name}” a fost adăugat în listă.")
-                st.rerun()
-    else:
-        st.warning(f"Ai atins limita de {MAX_PRODUCTS} produse. Șterge unul mai jos dacă vrei să adaugi altul.")
+            new_piece = st.text_input(
+                "Preț cutie (lei/cutie) — opțional", placeholder="ex: 249,00", key="m_new_piece_box"
+            )
+
+    if auto_calc:
+        st.caption("💡 Prețul nou este calculat automat din prețul vechi și procentul de reducere.")
+
+    barcode_num = st.text_input("Cod de bare (EAN) *", placeholder="ex: 5901234123457", key="m_barcode")
+    product_code = st.text_input("Cod produs *", placeholder="ex: GRE-4521", key="m_product_code")
+    status_text = st.text_input("Text status — opțional", placeholder="ex: Stoc limitat", key="m_status")
+    quantity = st.number_input(
+        "Câte etichete identice? (ex: 4 dacă vrei aceeași etichetă de 4 ori)",
+        min_value=1, max_value=100, value=1, step=1, key="m_quantity",
+    )
+
+    if st.button("➕ Adaugă în listă", key="add_product_btn"):
+        candidate = {
+            "Name": name,
+            "Percentage": normalize_percentage(percentage),
+            "OldPrice_m2": old_m2.strip(),
+            "NewPrice_m2": new_m2.strip(),
+            "OldPrice_piece": old_piece.strip(),
+            "NewPrice_piece": new_piece.strip(),
+            "BarcodeNum": barcode_num.strip(),
+            "ProductCode": product_code.strip(),
+            "StatusText": status_text.strip(),
+            "Format": "a4" if page_format.startswith("A4") else "normal",
+            "Quantity": int(quantity),
+        }
+        errors = validate_product(candidate, pricing_type)
+        if errors:
+            st.error(
+                "Nu am putut adăuga produsul din cauza următoarelor erori:\n\n"
+                + "\n".join(f"- {e}" for e in errors)
+            )
+        else:
+            st.session_state.manual_products.append(candidate)
+            save_cached_products(st.session_state.manual_products)
+            for k in [
+                "m_name", "m_percentage", "m_pricing_type", "m_old_piece", "m_new_piece_manual",
+                "m_old_m2", "m_new_m2_manual", "m_new_piece_box", "m_manual_box",
+                "m_barcode", "m_product_code", "m_status", "m_quantity",
+            ]:
+                if k in st.session_state:
+                    del st.session_state[k]
+            st.success(f"„{name}” a fost adăugat în listă.")
+            st.rerun()
 
     if st.session_state.manual_products:
         st.subheader("Produse adăugate")
@@ -852,20 +913,41 @@ Dacă un câmp e completat greșit, aplicația îți va arăta exact ce trebuie 
         bulk_cols[1].button("Deselectează tot", key="deselect_all", on_click=_deselect_all_callback)
 
         st.divider()
+        want_zip_manual = st.checkbox(
+            "📦 Descarcă toate etichetele într-o arhivă ZIP",
+            value=False,
+            key="want_zip_manual",
+        )
         if st.button("Generează etichetele", type="primary", key="generate_manual"):
             expanded_rows = []
             for p in st.session_state.manual_products:
                 expanded_rows.extend([p] * int(p.get("Quantity", 1)))
             with st.spinner("Se generează imaginile..."):
-                zip_buffer, count = generate_zip_from_csv(expanded_rows)
-            st.success(f"Gata! {count} imagini generate.")
-            st.download_button(
-                label="⬇️ Descarcă arhiva ZIP",
-                data=zip_buffer,
-                file_name="generated_labels.zip",
-                mime="application/zip",
-                key="download_manual",
-            )
+                files = build_label_files(expanded_rows)
+            st.success(f"Gata! {len(files)} imagini generate.")
+            if want_zip_manual:
+                st.download_button(
+                    label="⬇️ Descarcă arhiva ZIP",
+                    data=zip_label_files(files),
+                    file_name="generated_labels.zip",
+                    mime="application/zip",
+                    key="download_manual",
+                )
+            else:
+                for i, (filename, data) in enumerate(files):
+                    st.download_button(
+                        label=f"⬇️ {filename}",
+                        data=data,
+                        file_name=filename,
+                        mime="image/png",
+                        key=f"download_manual_{i}",
+                    )
+
+            with st.expander("🖨️ Printează direct din browser"):
+                st.caption(
+                    "Se deschide fereastra de printare a browserului — alege acolo imprimanta ta."
+                )
+                components.html(build_print_html(files), height=500, scrolling=True)
     else:
         st.info("Nu ai adăugat încă niciun produs.")
 
