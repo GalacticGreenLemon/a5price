@@ -144,7 +144,13 @@ def draw_split_price(draw, price_text, unit_text, font_whole, font_decimal, font
         draw.text((col_x - unit_bbox[0], unit_y), unit_text, fill=fill, font=font_unit)
 
     if frac:
-        frac_y = top_y + whole_bottom - frac_bbox[3]  # bottom-align to the whole number
+        frac_digits = frac.lstrip(',')
+        # Use just the digits' bottom (not the comma's) as the alignment
+        # reference — many fonts draw the comma with a descender that dips
+        # below the baseline, which would otherwise leave the actual digits
+        # short of the big number's bottom edge.
+        digits_bbox = draw.textbbox((0, 0), frac_digits, font=font_decimal) if frac_digits else frac_bbox
+        frac_y = top_y + whole_bottom - digits_bbox[3]
         draw.text((col_x - frac_bbox[0], frac_y), frac, fill=fill, font=font_decimal)
 
 
