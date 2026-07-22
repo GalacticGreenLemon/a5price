@@ -9,7 +9,7 @@ import zipfile
 import streamlit as st
 import streamlit.components.v1 as components
 from streamlit_local_storage import LocalStorage
-from PIL import Image, ImageDraw, ImageFont
+from PIL import Image, ImageDraw, ImageFont, ImageOps
 import barcode
 from barcode.writer import ImageWriter
 
@@ -180,18 +180,24 @@ def draw_label(draw, img, data, offset_x):
             draw.text((start_x_box + box_w, 840), box_unit, fill=BLACK, font=font_box_unit)
 
     bc_img = create_barcode(data['BarcodeNum'])
+    bbox = ImageOps.invert(bc_img.convert('L')).getbbox()
+    if bbox:
+        # Only trim the bottom margin (python-barcode reserves room for digit
+        # text there even with write_text=False) — keep the left/right/top
+        # quiet zone intact so the barcode stays scannable.
+        bc_img = bc_img.crop((0, 0, bc_img.width, bbox[3]))
     bc_img = bc_img.resize((300, 100))
     img.paste(bc_img, (int(offset_x + 50), 900))
 
     font_code = get_font(FONT_REGULAR, 22)
     text_bbox = draw.textbbox((0, 0), data['BarcodeNum'], font=font_code)
     text_w = text_bbox[2] - text_bbox[0]
-    draw.text((offset_x + 50 + 150 - text_w / 2, 1000), data['BarcodeNum'], fill=BLACK, font=font_code)
+    draw.text((offset_x + 50 + 150 - text_w / 2, 998), data['BarcodeNum'], fill=BLACK, font=font_code)
 
     font_prod = get_font(FONT_BOLD, 27)
     text_bbox = draw.textbbox((0, 0), data['ProductCode'], font=font_prod)
     text_w = text_bbox[2] - text_bbox[0]
-    draw.text((offset_x + 50 + 150 - text_w / 2, 1030), data['ProductCode'], fill=BLACK, font=font_prod)
+    draw.text((offset_x + 50 + 150 - text_w / 2, 1020), data['ProductCode'], fill=BLACK, font=font_prod)
 
     font_status = get_font(FONT_REGULAR, 35)
     text_bbox = draw.textbbox((0, 0), data['StatusText'], font=font_status)
