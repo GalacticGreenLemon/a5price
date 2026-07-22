@@ -137,16 +137,15 @@ def draw_split_price(draw, price_text, unit_text, font_whole, font_decimal, font
     start_x = right_edge - (whole_w + col_w)
 
     draw.text((start_x - whole_bbox[0], top_y), whole, fill=fill, font=font_whole)
+    col_x = start_x + whole_w  # flush against the right edge of the whole number
 
     if unit_text:
-        unit_x = right_edge - unit_w - unit_bbox[0]
         unit_y = top_y + whole_top - unit_bbox[1]  # top-align to the whole number
-        draw.text((unit_x, unit_y), unit_text, fill=fill, font=font_unit)
+        draw.text((col_x - unit_bbox[0], unit_y), unit_text, fill=fill, font=font_unit)
 
     if frac:
-        frac_x = right_edge - frac_w - frac_bbox[0]
         frac_y = top_y + whole_bottom - frac_bbox[3]  # bottom-align to the whole number
-        draw.text((frac_x, frac_y), frac, fill=fill, font=font_decimal)
+        draw.text((col_x - frac_bbox[0], frac_y), frac, fill=fill, font=font_decimal)
 
 
 def draw_label(draw, img, data, offset_x):
