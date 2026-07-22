@@ -946,11 +946,12 @@ Dacă un câmp e completat greșit, aplicația îți va arăta exact ce trebuie 
                             "StatusText": edit_status.strip(),
                             "Format": "a4" if edit_format.startswith("A4") else "normal",
                         })
-                        edit_pricing_type = (
-                            "Preț pe bucată"
-                            if (updated["OldPrice_piece"] or updated["NewPrice_piece"])
-                            else "Preț pe m² + cutie"
-                        )
+                        if updated["OldPrice_m2"] or updated["NewPrice_m2"]:
+                            edit_pricing_type = "Preț pe m² + cutie"
+                        elif updated["OldPrice_piece"]:
+                            edit_pricing_type = "Preț pe bucată"
+                        else:
+                            edit_pricing_type = None
                         edit_errors = validate_product(updated, edit_pricing_type)
                         if edit_errors:
                             st.error(
