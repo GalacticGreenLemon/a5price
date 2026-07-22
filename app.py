@@ -110,6 +110,45 @@ def draw_wrapped_text(draw, text, font, max_width, x_center, start_y):
     return y
 
 
+def draw_split_price(draw, price_text, unit_text, font_whole, font_decimal, font_unit, right_edge, top_y, fill):
+    """
+    Draws a price like '48,00' with the whole-number part big and the unit
+    label ('lei/m2', etc.) and the ',00' part stacked in a column to its
+    right — unit label on top, decimal part on the bottom, both right-aligned
+    to the label's edge — similar to how price tags in stores usually do it.
+    """
+    if ',' in price_text:
+        whole, frac = price_text.split(',', 1)
+        frac = ',' + frac
+    else:
+        whole, frac = price_text, ''
+
+    whole_bbox = draw.textbbox((0, 0), whole, font=font_whole)
+    whole_w = whole_bbox[2] - whole_bbox[0]
+    whole_top, whole_bottom = whole_bbox[1], whole_bbox[3]
+
+    unit_bbox = draw.textbbox((0, 0), unit_text, font=font_unit) if unit_text else (0, 0, 0, 0)
+    unit_w = unit_bbox[2] - unit_bbox[0]
+
+    frac_bbox = draw.textbbox((0, 0), frac, font=font_decimal) if frac else (0, 0, 0, 0)
+    frac_w = frac_bbox[2] - frac_bbox[0]
+
+    col_w = max(unit_w, frac_w)
+    start_x = right_edge - (whole_w + col_w)
+
+    draw.text((start_x - whole_bbox[0], top_y), whole, fill=fill, font=font_whole)
+
+    if unit_text:
+        unit_x = right_edge - unit_w - unit_bbox[0]
+        unit_y = top_y + whole_top - unit_bbox[1]  # top-align to the whole number
+        draw.text((unit_x, unit_y), unit_text, fill=fill, font=font_unit)
+
+    if frac:
+        frac_x = right_edge - frac_w - frac_bbox[0]
+        frac_y = top_y + whole_bottom - frac_bbox[3]  # bottom-align to the whole number
+        draw.text((frac_x, frac_y), frac, fill=fill, font=font_decimal)
+
+
 def draw_label(draw, img, data, offset_x):
     RED = (227, 24, 45)
     BLACK = (0, 0, 0)
@@ -126,12 +165,13 @@ def draw_label(draw, img, data, offset_x):
 
     font_title = get_font(FONT_BOLD, 50)
     full_text = data['Name']
-    title_y_start = 420
+    title_y_start = 405
     draw_wrapped_text(draw, full_text, font_title, max_width=750, x_center=offset_x + 400, start_y=title_y_start)
 
     font_old = get_font(FONT_BOLD, 55)
     font_small = get_font(FONT_BOLD, 35)
     font_new = get_font(FONT_BOLD, 170)
+    font_new_decimal = get_font(FONT_BOLD, 75)
     font_new_unit = get_font(FONT_BOLD, 45)
     font_box = get_font(FONT_BOLD, 45)
     font_box_unit = get_font(FONT_BOLD, 35)
@@ -150,10 +190,11 @@ def draw_label(draw, img, data, offset_x):
 
         new_price_text = data.get('NewPrice_piece', '')
         new_unit = " lei/buc"
-        new_w = draw.textlength(new_price_text, font=font_new)
-        start_x_new = offset_x + 750 - (new_w + draw.textlength(new_unit, font=font_new_unit))
-        draw.text((start_x_new, 650), new_price_text, fill=BLACK, font=font_new)
-        draw.text((start_x_new + new_w, 750), new_unit, fill=BLACK, font=font_new_unit)
+        draw_split_price(
+            draw, new_price_text, new_unit,
+            font_new, font_new_decimal, font_new_unit,
+            right_edge=offset_x + 750, top_y=650, fill=BLACK,
+        )
 
     else:
         old_price_text = data['OldPrice_m2']
@@ -166,10 +207,11 @@ def draw_label(draw, img, data, offset_x):
 
         new_price_text = data.get('NewPrice_m2', '')
         new_unit = " lei/m2"
-        new_w = draw.textlength(new_price_text, font=font_new)
-        start_x_new = offset_x + 750 - (new_w + draw.textlength(new_unit, font=font_new_unit))
-        draw.text((start_x_new, 650), new_price_text, fill=BLACK, font=font_new)
-        draw.text((start_x_new + new_w, 750), new_unit, fill=BLACK, font=font_new_unit)
+        draw_split_price(
+            draw, new_price_text, new_unit,
+            font_new, font_new_decimal, font_new_unit,
+            right_edge=offset_x + 750, top_y=650, fill=BLACK,
+        )
 
         box_price_text = data.get('NewPrice_piece', '')
         if box_price_text:
