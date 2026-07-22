@@ -849,7 +849,7 @@ Dacă un câmp e completat greșit, aplicația îți va arăta exact ce trebuie 
             return _cb
 
         for idx, p in enumerate(st.session_state.manual_products):
-            cols = st.columns([0.4, 0.4, 3.5, 0.9, 1])
+            cols = st.columns([0.4, 0.4, 3.1, 0.9, 0.6, 0.6])
             cols[0].write(f"**{idx + 1}.**")
             cols[1].checkbox("", key=f"chk_{idx}", label_visibility="collapsed")
             if p["OldPrice_piece"]:
@@ -869,7 +869,10 @@ Dacă un câmp e completat greșit, aplicația îți va arăta exact ce trebuie 
                 on_change=_make_qty_callback(idx),
                 label_visibility="collapsed",
             )
-            if cols[4].button("🗑️", key=f"del_{idx}"):
+            if cols[4].button("✏️", key=f"edit_{idx}"):
+                st.session_state["editing_idx"] = idx
+                st.rerun()
+            if cols[5].button("🗑️", key=f"del_{idx}"):
                 st.session_state.manual_products.pop(idx)
                 save_cached_products(st.session_state.manual_products)
                 for i in range(n_products):
@@ -882,6 +885,87 @@ Dacă un câmp e completat greșit, aplicația îți va arăta exact ce trebuie 
                     if k in st.session_state:
                         del st.session_state[k]
                 st.rerun()
+
+            if st.session_state.get("editing_idx") == idx:
+                with st.container(border=True):
+                    st.markdown(f"**Editează produsul {idx + 1}**")
+                    e1, e2 = st.columns(2)
+                    edit_name = e1.text_input("Nume produs *", value=p["Name"], key=f"edit_name_{idx}")
+                    edit_percentage = e2.text_input(
+                        "Procent reducere (%) *", value=p["Percentage"], key=f"edit_pct_{idx}"
+                    )
+
+                    e3, e4 = st.columns(2)
+                    edit_old_piece = e3.text_input(
+                        "Preț vechi (lei/buc)", value=p.get("OldPrice_piece", ""), key=f"edit_oldpiece_{idx}"
+                    )
+                    edit_new_piece = e4.text_input(
+                        "Preț nou (lei/buc)", value=p.get("NewPrice_piece", ""), key=f"edit_newpiece_{idx}"
+                    )
+
+                    e5, e6 = st.columns(2)
+                    edit_old_m2 = e5.text_input(
+                        "Preț vechi (lei/m²)", value=p.get("OldPrice_m2", ""), key=f"edit_oldm2_{idx}"
+                    )
+                    edit_new_m2 = e6.text_input(
+                        "Preț nou (lei/m²)", value=p.get("NewPrice_m2", ""), key=f"edit_newm2_{idx}"
+                    )
+                    st.caption("Completează doar perechea de preț relevantă (pe bucată SAU pe m²).")
+
+                    e7, e8 = st.columns(2)
+                    edit_barcode = e7.text_input(
+                        "Cod de bare (EAN) *", value=p["BarcodeNum"], key=f"edit_barcode_{idx}"
+                    )
+                    edit_product_code = e8.text_input(
+                        "Cod produs *", value=p["ProductCode"], key=f"edit_code_{idx}"
+                    )
+
+                    edit_status = st.text_input(
+                        "Text status — opțional", value=p.get("StatusText", ""), key=f"edit_status_{idx}"
+                    )
+                    edit_format = st.radio(
+                        "Format",
+                        ["Normal (2 pe pagină)", "A4 (o pagină)"],
+                        index=1 if p.get("Format") == "a4" else 0,
+                        key=f"edit_format_{idx}",
+                        horizontal=True,
+                    )
+
+                    save_col, cancel_col = st.columns(2)
+                    if save_col.button("💾 Salvează modificările", key=f"save_edit_{idx}", type="primary"):
+                        updated = dict(p)
+                        updated.update({
+                            "Name": edit_name.strip(),
+                            "Percentage": normalize_percentage(edit_percentage),
+                            "OldPrice_piece": edit_old_piece.strip(),
+                            "NewPrice_piece": edit_new_piece.strip(),
+                            "OldPrice_m2": edit_old_m2.strip(),
+                            "NewPrice_m2": edit_new_m2.strip(),
+                            "BarcodeNum": edit_barcode.strip(),
+                            "ProductCode": edit_product_code.strip(),
+                            "StatusText": edit_status.strip(),
+                            "Format": "a4" if edit_format.startswith("A4") else "normal",
+                        })
+                        edit_pricing_type = (
+                            "Preț pe bucată"
+                            if (updated["OldPrice_piece"] or updated["NewPrice_piece"])
+                            else "Preț pe m² + cutie"
+                        )
+                        edit_errors = validate_product(updated, edit_pricing_type)
+                        if edit_errors:
+                            st.error(
+                                "Nu am putut salva modificările din cauza următoarelor erori:\n\n"
+                                + "\n".join(f"- {e}" for e in edit_errors)
+                            )
+                        else:
+                            st.session_state.manual_products[idx] = updated
+                            save_cached_products(st.session_state.manual_products)
+                            st.session_state["editing_idx"] = None
+                            st.success("Produs actualizat.")
+                            st.rerun()
+                    if cancel_col.button("Anulează", key=f"cancel_edit_{idx}"):
+                        st.session_state["editing_idx"] = None
+                        st.rerun()
 
         selected_indices = [i for i in range(n_products) if st.session_state.get(f"chk_{i}", False)]
 
