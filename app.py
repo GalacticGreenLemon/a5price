@@ -247,12 +247,16 @@ def draw_label(draw, img, data, offset_x):
     draw.text((offset_x + 50 + 150 - text_w / 2, 1020), data['ProductCode'], fill=BLACK, font=font_prod)
 
     if data['StatusText']:
-        max_w = 390  # available width for status text (right side of label)
-        max_size = 35
-        min_size = 18
+        # Status text occupies the right side next to the barcode.
+        # Top = top of barcode image (900), bottom = bottom of product code (~1050).
+        STATUS_TOP = 900
+        STATUS_BOTTOM = 1050
+        STATUS_RIGHT = offset_x + 750   # right edge of label half
+        STATUS_LEFT = offset_x + 400    # left boundary of status zone
+        max_w = STATUS_RIGHT - STATUS_LEFT
+        available_h = STATUS_BOTTOM - STATUS_TOP
         status_str = data['StatusText']
 
-        # Find the largest font size where all words fit wrapped within max_w
         def wrap_text(text, font, max_width):
             words = text.split()
             lines, current = [], []
@@ -268,24 +272,19 @@ def draw_label(draw, img, data, offset_x):
                 lines.append(' '.join(current))
             return lines
 
-        font_size = max_size
-        while font_size >= min_size:
+        # Find largest font where all wrapped lines fit within available_h
+        for font_size in range(40, 13, -1):
             font_status = get_font(FONT_REGULAR, font_size)
             lines = wrap_text(status_str, font_status, max_w)
-            # Also check no single word overflows
-            if all(draw.textlength(ln, font=font_status) <= max_w for ln in lines):
+            line_h = draw.textbbox((0, 0), "Ag", font=font_status)[3] + 4
+            if line_h * len(lines) <= available_h:
                 break
-            font_size -= 1
-        else:
-            font_status = get_font(FONT_REGULAR, min_size)
-            lines = wrap_text(status_str, font_status, max_w)
 
-        line_h = draw.textbbox((0, 0), "Ag", font=font_status)[3] + 4
         total_h = line_h * len(lines)
-        y = 1000 + (50 - total_h) // 2  # vertically centre within the status area
+        y = STATUS_TOP + (available_h - total_h) // 2  # vertically centre in the zone
         for line in lines:
             line_w = draw.textlength(line, font=font_status)
-            draw.text((offset_x + 750 - line_w, y), line, fill=BLACK, font=font_status)
+            draw.text((STATUS_RIGHT - line_w, y), line, fill=BLACK, font=font_status)
             y += line_h
 
 
