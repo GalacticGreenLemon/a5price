@@ -246,10 +246,47 @@ def draw_label(draw, img, data, offset_x):
     text_w = text_bbox[2] - text_bbox[0]
     draw.text((offset_x + 50 + 150 - text_w / 2, 1020), data['ProductCode'], fill=BLACK, font=font_prod)
 
-    font_status = get_font(FONT_REGULAR, 35)
-    text_bbox = draw.textbbox((0, 0), data['StatusText'], font=font_status)
-    text_w = text_bbox[2] - text_bbox[0]
-    draw.text((offset_x + 750 - text_w, 1000), data['StatusText'], fill=BLACK, font=font_status)
+    if data['StatusText']:
+        max_w = 390  # available width for status text (right side of label)
+        max_size = 35
+        min_size = 18
+        status_str = data['StatusText']
+
+        # Find the largest font size where all words fit wrapped within max_w
+        def wrap_text(text, font, max_width):
+            words = text.split()
+            lines, current = [], []
+            for word in words:
+                test = ' '.join(current + [word])
+                if draw.textlength(test, font=font) <= max_width:
+                    current.append(word)
+                else:
+                    if current:
+                        lines.append(' '.join(current))
+                    current = [word]
+            if current:
+                lines.append(' '.join(current))
+            return lines
+
+        font_size = max_size
+        while font_size >= min_size:
+            font_status = get_font(FONT_REGULAR, font_size)
+            lines = wrap_text(status_str, font_status, max_w)
+            # Also check no single word overflows
+            if all(draw.textlength(ln, font=font_status) <= max_w for ln in lines):
+                break
+            font_size -= 1
+        else:
+            font_status = get_font(FONT_REGULAR, min_size)
+            lines = wrap_text(status_str, font_status, max_w)
+
+        line_h = draw.textbbox((0, 0), "Ag", font=font_status)[3] + 4
+        total_h = line_h * len(lines)
+        y = 1000 + (50 - total_h) // 2  # vertically centre within the status area
+        for line in lines:
+            line_w = draw.textlength(line, font=font_status)
+            draw.text((offset_x + 750 - line_w, y), line, fill=BLACK, font=font_status)
+            y += line_h
 
 
 def generate_zip(data_rows):
@@ -989,21 +1026,45 @@ Dacă un câmp e completat greșit, aplicația îți va arăta exact ce trebuie 
                         "Procent reducere (%) *", value=p["Percentage"], key=f"edit_pct_{idx}"
                     )
 
+                    edit_manual_calc = st.checkbox(
+                        "Prefer să calculez eu prețul nou (fără calcul automat)",
+                        key=f"edit_manual_calc_{idx}",
+                    )
+                    edit_auto_calc = not edit_manual_calc
+
                     e3, e4 = st.columns(2)
                     edit_old_piece = e3.text_input(
                         "Preț vechi (lei/buc)", value=p.get("OldPrice_piece", ""), key=f"edit_oldpiece_{idx}"
                     )
-                    edit_new_piece = e4.text_input(
-                        "Preț nou (lei/buc)", value=p.get("NewPrice_piece", ""), key=f"edit_newpiece_{idx}"
-                    )
+                    if edit_auto_calc:
+                        computed_piece = _compute_new_price(edit_old_piece, edit_percentage)
+                        if computed_piece and edit_old_piece.strip():
+                            e4.text_input("Preț nou (lei/buc) — calculat automat", value=computed_piece, disabled=True, key=f"edit_newpiece_auto_{idx}")
+                            edit_new_piece = computed_piece
+                        else:
+                            e4.info("Completează prețul vechi și procentul pentru calcul automat.")
+                            edit_new_piece = p.get("NewPrice_piece", "")
+                    else:
+                        edit_new_piece = e4.text_input(
+                            "Preț nou (lei/buc)", value=p.get("NewPrice_piece", ""), key=f"edit_newpiece_{idx}"
+                        )
 
                     e5, e6 = st.columns(2)
                     edit_old_m2 = e5.text_input(
                         "Preț vechi (lei/m²)", value=p.get("OldPrice_m2", ""), key=f"edit_oldm2_{idx}"
                     )
-                    edit_new_m2 = e6.text_input(
-                        "Preț nou (lei/m²)", value=p.get("NewPrice_m2", ""), key=f"edit_newm2_{idx}"
-                    )
+                    if edit_auto_calc:
+                        computed_m2 = _compute_new_price(edit_old_m2, edit_percentage)
+                        if computed_m2 and edit_old_m2.strip():
+                            e6.text_input("Preț nou (lei/m²) — calculat automat", value=computed_m2, disabled=True, key=f"edit_newm2_auto_{idx}")
+                            edit_new_m2 = computed_m2
+                        else:
+                            e6.info("Completează prețul vechi și procentul pentru calcul automat.")
+                            edit_new_m2 = p.get("NewPrice_m2", "")
+                    else:
+                        edit_new_m2 = e6.text_input(
+                            "Preț nou (lei/m²)", value=p.get("NewPrice_m2", ""), key=f"edit_newm2_{idx}"
+                        )
                     st.caption("Completează doar perechea de preț relevantă (pe bucată SAU pe m²).")
 
                     e7, e8 = st.columns(2)
