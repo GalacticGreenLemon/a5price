@@ -248,14 +248,29 @@ def draw_label(draw, img, data, offset_x):
 
     if data['StatusText']:
         STATUS_TOP = 900
-        STATUS_BOTTOM = 1090   # bottom of the label half, not just the barcode —
-                                # this column is otherwise empty all the way down
+        STATUS_BOTTOM = 1060
         STATUS_RIGHT = offset_x + 750
-        max_w = 150             # narrow column — forces wrapping every ~2 words
+        STATUS_LEFT = offset_x + 390    # barcode ends at offset_x+350 — 40px safety gap
+        max_w = STATUS_RIGHT - STATUS_LEFT
         available_h = STATUS_BOTTOM - STATUS_TOP
         status_str = data['StatusText']
         font_status = get_font(FONT_REGULAR, 35)
         line_h = draw.textbbox((0, 0), "Ag", font=font_status)[3] + 6
+
+        def break_long_word(word, fnt, max_width):
+            """Hard-wraps a single word with no spaces (e.g. a long test
+            string) at the character level, so it can't overflow the column."""
+            chunks, current_chunk = [], ""
+            for ch in word:
+                test = current_chunk + ch
+                if draw.textlength(test, font=fnt) <= max_width or not current_chunk:
+                    current_chunk = test
+                else:
+                    chunks.append(current_chunk)
+                    current_chunk = ch
+            if current_chunk:
+                chunks.append(current_chunk)
+            return chunks
 
         words = status_str.split()
         lines, current = [], []
@@ -266,7 +281,11 @@ def draw_label(draw, img, data, offset_x):
             else:
                 if current:
                     lines.append(' '.join(current))
-                current = [word]
+                    current = []
+                if draw.textlength(word, font=font_status) <= max_w:
+                    current = [word]
+                else:
+                    lines.extend(break_long_word(word, font_status, max_w))
         if current:
             lines.append(' '.join(current))
 
