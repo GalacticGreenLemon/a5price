@@ -247,22 +247,20 @@ def draw_label(draw, img, data, offset_x):
     draw.text((offset_x + 50 + 150 - text_w / 2, 1020), data['ProductCode'], fill=BLACK, font=font_prod)
 
     if data['StatusText']:
-        # Status text occupies the right side next to the barcode.
-        # Top = top of barcode image (900), bottom = bottom of product code (~1050).
         STATUS_TOP = 900
         STATUS_BOTTOM = 1050
-        STATUS_RIGHT = offset_x + 750   # right edge of label half
-        STATUS_LEFT = offset_x + 400    # left boundary of status zone
+        STATUS_RIGHT = offset_x + 750
+        STATUS_LEFT = offset_x + 510   # ~240px wide zone on the right
         max_w = STATUS_RIGHT - STATUS_LEFT
         available_h = STATUS_BOTTOM - STATUS_TOP
         status_str = data['StatusText']
 
-        def wrap_text(text, font, max_width):
+        def wrap_text(text, fnt, max_width):
             words = text.split()
             lines, current = [], []
             for word in words:
                 test = ' '.join(current + [word])
-                if draw.textlength(test, font=font) <= max_width:
+                if draw.textlength(test, font=fnt) <= max_width:
                     current.append(word)
                 else:
                     if current:
@@ -272,20 +270,33 @@ def draw_label(draw, img, data, offset_x):
                 lines.append(' '.join(current))
             return lines
 
-        # Find largest font where all wrapped lines fit within available_h
-        for font_size in range(40, 13, -1):
-            font_status = get_font(FONT_REGULAR, font_size)
-            lines = wrap_text(status_str, font_status, max_w)
-            line_h = draw.textbbox((0, 0), "Ag", font=font_status)[3] + 4
-            if line_h * len(lines) <= available_h:
+        # Try from large to small: pick the biggest font where every wrapped
+        # line fits in width AND all lines together fit in height
+        chosen_font = None
+        chosen_lines = None
+        chosen_line_h = None
+        for font_size in range(70, 13, -1):
+            fnt = get_font(FONT_REGULAR, font_size)
+            lines = wrap_text(status_str, fnt, max_w)
+            line_h = draw.textbbox((0, 0), "Ag", font=fnt)[3] + 4
+            if (line_h * len(lines) <= available_h and
+                    all(draw.textlength(ln, font=fnt) <= max_w for ln in lines)):
+                chosen_font = fnt
+                chosen_lines = lines
+                chosen_line_h = line_h
                 break
 
-        total_h = line_h * len(lines)
-        y = STATUS_TOP + (available_h - total_h) // 2  # vertically centre in the zone
-        for line in lines:
-            line_w = draw.textlength(line, font=font_status)
-            draw.text((STATUS_RIGHT - line_w, y), line, fill=BLACK, font=font_status)
-            y += line_h
+        if chosen_font is None:
+            chosen_font = get_font(FONT_REGULAR, 14)
+            chosen_lines = wrap_text(status_str, chosen_font, max_w)
+            chosen_line_h = draw.textbbox((0, 0), "Ag", font=chosen_font)[3] + 4
+
+        total_h = chosen_line_h * len(chosen_lines)
+        y = STATUS_TOP + (available_h - total_h) // 2
+        for line in chosen_lines:
+            line_w = draw.textlength(line, font=chosen_font)
+            draw.text((STATUS_RIGHT - line_w, y), line, fill=BLACK, font=chosen_font)
+            y += chosen_line_h
 
 
 def generate_zip(data_rows):
