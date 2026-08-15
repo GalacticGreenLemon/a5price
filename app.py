@@ -248,9 +248,10 @@ def draw_label(draw, img, data, offset_x):
 
     if data['StatusText']:
         STATUS_TOP = 900
-        STATUS_BOTTOM = 1050
+        STATUS_BOTTOM = 1090   # bottom of the label half, not just the barcode —
+                                # this column is otherwise empty all the way down
         STATUS_RIGHT = offset_x + 750
-        max_w = 150          # narrow column — forces wrapping every ~2 words
+        max_w = 150             # narrow column — forces wrapping every ~2 words
         available_h = STATUS_BOTTOM - STATUS_TOP
         status_str = data['StatusText']
         font_status = get_font(FONT_REGULAR, 35)
@@ -270,7 +271,7 @@ def draw_label(draw, img, data, offset_x):
             lines.append(' '.join(current))
 
         total_h = line_h * len(lines)
-        y = STATUS_TOP + (available_h - total_h) // 2
+        y = STATUS_TOP + max(0, (available_h - total_h) // 2)
         for line in lines:
             line_w = draw.textlength(line, font=font_status)
             draw.text((STATUS_RIGHT - line_w, y), line, fill=BLACK, font=font_status)
