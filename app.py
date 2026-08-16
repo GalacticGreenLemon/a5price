@@ -67,6 +67,62 @@ def save_cached_products(products):
         pass
 
 
+# ---------------------------------------------------------------------------
+# Preset system — stored in a JSON file on the server so all browsers and
+# devices share the same presets. A5 and A4 are built-in and read-only.
+# ---------------------------------------------------------------------------
+PRESETS_FILE = "presets.json"
+
+DEFAULT_STYLE = {
+    "box_color": [227, 24, 45],          # red
+    "pct_font_size": 260,
+    "title_font_size": 50,
+    "old_price_font_size": 55,
+    "new_price_font_size": 170,
+    "new_price_decimal_font_size": 75,
+    "new_price_unit_font_size": 45,
+    "box_price_font_size": 45,
+    "status_font_size": 35,
+    "unit_piece": "lei/buc",
+    "unit_m2": "lei/m2",
+    "unit_cutie": "lei/cutie",
+    "unit_old_piece": "lei/buc",
+    "unit_old_m2": "lei/m2",
+    "new_price_y": 650,
+    "old_price_y": 590,
+    "box_price_y": 830,
+    "red_box_height": 400,
+}
+
+BUILTIN_PRESETS = {
+    "A5 (implicit)": {**DEFAULT_STYLE, "format": "a5", "builtin": True},
+    "A4 (implicit)": {**DEFAULT_STYLE, "format": "a4", "builtin": True},
+}
+
+
+def load_presets():
+    try:
+        with open(PRESETS_FILE, "r", encoding="utf-8") as f:
+            return json.load(f)
+    except (FileNotFoundError, json.JSONDecodeError):
+        return {}
+
+
+def save_presets(presets):
+    with open(PRESETS_FILE, "w", encoding="utf-8") as f:
+        json.dump(presets, f, ensure_ascii=False, indent=2)
+
+
+def all_presets():
+    """Returns built-ins merged with user presets. Built-ins always come first."""
+    user = load_presets()
+    return {**BUILTIN_PRESETS, **user}
+
+
+def get_preset(name):
+    return all_presets().get(name, BUILTIN_PRESETS["A5 (implicit)"])
+
+
 def get_font(path, size):
     try:
         return ImageFont.truetype(path, size)
@@ -154,77 +210,86 @@ def draw_split_price(draw, price_text, unit_text, font_whole, font_decimal, font
         draw.text((col_x - frac_bbox[0], frac_y), frac, fill=fill, font=font_decimal)
 
 
-def draw_label(draw, img, data, offset_x):
-    RED = (227, 24, 45)
+def draw_label(draw, img, data, offset_x, style=None):
+    if style is None:
+        style = DEFAULT_STYLE
+    box_color = tuple(style.get("box_color", DEFAULT_STYLE["box_color"]))
     BLACK = (0, 0, 0)
     WHITE = (255, 255, 255)
 
-    draw.rectangle([offset_x, 0, offset_x + 800, 400], fill=RED)
+    red_box_h = style.get("red_box_height", DEFAULT_STYLE["red_box_height"])
+    draw.rectangle([offset_x, 0, offset_x + 800, red_box_h], fill=box_color)
 
-    font_pct = get_font(FONT_BOLD, 260)
+    font_pct = get_font(FONT_BOLD, style.get("pct_font_size", DEFAULT_STYLE["pct_font_size"]))
     percentage_text = f"-{data['Percentage']}%"
     text_bbox = draw.textbbox((0, 0), percentage_text, font=font_pct)
     text_w = text_bbox[2] - text_bbox[0]
     text_h = text_bbox[3] - text_bbox[1]
-    draw.text((offset_x + 400 - text_w / 2, 200 - text_h / 2 - 50), percentage_text, fill=WHITE, font=font_pct)
+    draw.text((offset_x + 400 - text_w / 2, red_box_h / 2 - text_h / 2 - 50), percentage_text, fill=WHITE, font=font_pct)
 
-    font_title = get_font(FONT_BOLD, 50)
+    font_title = get_font(FONT_BOLD, style.get("title_font_size", DEFAULT_STYLE["title_font_size"]))
     full_text = data['Name']
-    title_y_start = 405
+    title_y_start = red_box_h + 5
     draw_wrapped_text(draw, full_text, font_title, max_width=750, x_center=offset_x + 400, start_y=title_y_start)
 
-    font_old = get_font(FONT_BOLD, 55)
+    font_old = get_font(FONT_BOLD, style.get("old_price_font_size", DEFAULT_STYLE["old_price_font_size"]))
     font_small = get_font(FONT_BOLD, 35)
-    font_new = get_font(FONT_BOLD, 170)
-    font_new_decimal = get_font(FONT_BOLD, 75)
-    font_new_unit = get_font(FONT_BOLD, 45)
-    font_box = get_font(FONT_BOLD, 45)
+    font_new = get_font(FONT_BOLD, style.get("new_price_font_size", DEFAULT_STYLE["new_price_font_size"]))
+    font_new_decimal = get_font(FONT_BOLD, style.get("new_price_decimal_font_size", DEFAULT_STYLE["new_price_decimal_font_size"]))
+    font_new_unit = get_font(FONT_BOLD, style.get("new_price_unit_font_size", DEFAULT_STYLE["new_price_unit_font_size"]))
+    font_box = get_font(FONT_BOLD, style.get("box_price_font_size", DEFAULT_STYLE["box_price_font_size"]))
     font_box_unit = get_font(FONT_BOLD, 35)
+
+    unit_piece   = " " + style.get("unit_piece",    DEFAULT_STYLE["unit_piece"])
+    unit_m2      = " " + style.get("unit_m2",       DEFAULT_STYLE["unit_m2"])
+    unit_cutie   = " " + style.get("unit_cutie",    DEFAULT_STYLE["unit_cutie"])
+    unit_old_piece = " " + style.get("unit_old_piece", DEFAULT_STYLE["unit_old_piece"])
+    unit_old_m2    = " " + style.get("unit_old_m2",    DEFAULT_STYLE["unit_old_m2"])
+
+    old_price_y = style.get("old_price_y", DEFAULT_STYLE["old_price_y"])
+    new_price_y = style.get("new_price_y", DEFAULT_STYLE["new_price_y"])
+    box_price_y = style.get("box_price_y", DEFAULT_STYLE["box_price_y"])
 
     has_m2 = bool(data.get('OldPrice_m2', '').strip())
 
     if not has_m2:
         old_price_text = data.get('OldPrice_piece', '')
-        old_unit = " lei/buc"
-
+        old_unit = unit_old_piece
         old_w = draw.textlength(old_price_text, font=font_old)
         start_x = offset_x + 750 - (old_w + draw.textlength(old_unit, font=font_small))
-        draw.text((start_x, 590), old_price_text, fill=BLACK, font=font_old)
-        draw.text((start_x + old_w, 610), old_unit, fill=BLACK, font=font_small)
-        draw.line([start_x - 10, 635, start_x + old_w + 10, 595], fill=BLACK, width=6)
+        draw.text((start_x, old_price_y), old_price_text, fill=BLACK, font=font_old)
+        draw.text((start_x + old_w, old_price_y + 20), old_unit, fill=BLACK, font=font_small)
+        draw.line([start_x - 10, old_price_y + 45, start_x + old_w + 10, old_price_y + 5], fill=BLACK, width=6)
 
         new_price_text = data.get('NewPrice_piece', '')
-        new_unit = " lei/buc"
         draw_split_price(
-            draw, new_price_text, new_unit,
+            draw, new_price_text, unit_piece,
             font_new, font_new_decimal, font_new_unit,
-            right_edge=offset_x + 750, top_y=650, fill=BLACK,
+            right_edge=offset_x + 750, top_y=new_price_y, fill=BLACK,
         )
 
     else:
         old_price_text = data['OldPrice_m2']
-        old_unit = " lei/m2"
+        old_unit = unit_old_m2
         old_w = draw.textlength(old_price_text, font=font_old)
         start_x = offset_x + 750 - (old_w + draw.textlength(old_unit, font=font_small))
-        draw.text((start_x, 590), old_price_text, fill=BLACK, font=font_old)
-        draw.text((start_x + old_w, 610), old_unit, fill=BLACK, font=font_small)
-        draw.line([start_x - 10, 635, start_x + old_w + 10, 595], fill=BLACK, width=6)
+        draw.text((start_x, old_price_y), old_price_text, fill=BLACK, font=font_old)
+        draw.text((start_x + old_w, old_price_y + 20), old_unit, fill=BLACK, font=font_small)
+        draw.line([start_x - 10, old_price_y + 45, start_x + old_w + 10, old_price_y + 5], fill=BLACK, width=6)
 
         new_price_text = data.get('NewPrice_m2', '')
-        new_unit = " lei/m2"
         draw_split_price(
-            draw, new_price_text, new_unit,
+            draw, new_price_text, unit_m2,
             font_new, font_new_decimal, font_new_unit,
-            right_edge=offset_x + 750, top_y=650, fill=BLACK,
+            right_edge=offset_x + 750, top_y=new_price_y, fill=BLACK,
         )
 
         box_price_text = data.get('NewPrice_piece', '')
         if box_price_text:
-            box_unit = " lei/cutie"
             box_w = draw.textlength(box_price_text, font=font_box)
-            start_x_box = offset_x + 750 - (box_w + draw.textlength(box_unit, font=font_box_unit))
-            draw.text((start_x_box, 830), box_price_text, fill=BLACK, font=font_box)
-            draw.text((start_x_box + box_w, 840), box_unit, fill=BLACK, font=font_box_unit)
+            start_x_box = offset_x + 750 - (box_w + draw.textlength(unit_cutie, font=font_box_unit))
+            draw.text((start_x_box, box_price_y), box_price_text, fill=BLACK, font=font_box)
+            draw.text((start_x_box + box_w, box_price_y + 10), unit_cutie, fill=BLACK, font=font_box_unit)
 
     bc_img = create_barcode(data['BarcodeNum'])
     bbox = ImageOps.invert(bc_img.convert('L')).getbbox()
@@ -255,7 +320,7 @@ def draw_label(draw, img, data, offset_x):
         available_h = STATUS_BOTTOM - STATUS_TOP
         status_str = data['StatusText']
         font_status = get_font(FONT_REGULAR, 35)
-        line_h = draw.textbbox((0, 0), "Ag", font=font_status)[3] - 10
+        line_h = draw.textbbox((0, 0), "Ag", font=font_status)[3] + 1
 
         def break_long_word(word, fnt, max_width):
             """Hard-wraps a single word with no spaces (e.g. a long test
@@ -342,11 +407,11 @@ except AttributeError:  # older Pillow versions
     RESAMPLE = Image.LANCZOS
 
 
-def render_single_page(row, fmt):
+def render_single_page(row, fmt, style=None):
     """Draws one product's label, rotates it 90°, and centers it on an A4 landscape page."""
     label_img = Image.new('RGB', (800, 1100), color=(255, 255, 255))
     draw = ImageDraw.Draw(label_img)
-    draw_label(draw, label_img, row, 0)
+    draw_label(draw, label_img, row, 0, style=style)
 
     rotated = label_img.rotate(90, expand=True)
 
@@ -375,16 +440,13 @@ def get_row_format(row):
 
 def build_label_files(data_rows):
     """
-    Renders each label image respecting each row's own 'Format' column, so a single CSV
-    can mix normal 2-up labels with A4 single-page labels in the same file. Returns a
+    Renders each label image respecting each row's own 'Preset' column. Returns a
     list of (filename, png_bytes) tuples — zipping them is a separate, optional step.
     """
     files = []
     used_names = {}
 
     def _unique_name(base_name):
-        """Appends -2, -3, ... if base_name was already used, so duplicate labels
-        (e.g. from a Quantity > 1) don't overwrite each other."""
         if base_name not in used_names:
             used_names[base_name] = 1
             return base_name
@@ -396,11 +458,14 @@ def build_label_files(data_rows):
     n = len(data_rows)
     while i < n:
         row = data_rows[i]
-        fmt = get_row_format(row)
+        preset_name = row.get("Preset", "A5 (implicit)")
+        preset = get_preset(preset_name)
+        fmt = preset.get("format", "a5")
+        style = preset
 
         if fmt == "a4":
-            page = render_single_page(row, fmt)
-            output_filename = _unique_name(f"{row['BarcodeNum'][-4:]}_{fmt.upper()}.png")
+            page = render_single_page(row, fmt, style=style)
+            output_filename = _unique_name(f"{row['BarcodeNum'][-4:]}_A4.png")
             buf = io.BytesIO()
             page.save(buf, format="PNG")
             files.append((output_filename, buf.getvalue()))
@@ -408,13 +473,12 @@ def build_label_files(data_rows):
         else:
             img = Image.new('RGB', (1600, 1100), color=(255, 255, 255))
             draw = ImageDraw.Draw(img)
-            draw_label(draw, img, row, 0)
+            draw_label(draw, img, row, 0, style=style)
             output_filename = row['BarcodeNum'][-4:]
 
-            # Only pair with the next row if it's also a "normal" row —
-            # an A4 row never gets combined onto a shared page.
-            if i + 1 < n and get_row_format(data_rows[i + 1]) == "normal":
-                draw_label(draw, img, data_rows[i + 1], 800)
+            if i + 1 < n and get_preset(data_rows[i + 1].get("Preset", "A5 (implicit)")).get("format", "a5") != "a4":
+                next_style = get_preset(data_rows[i + 1].get("Preset", "A5 (implicit)"))
+                draw_label(draw, img, data_rows[i + 1], 800, style=next_style)
                 draw.line([800, 0, 800, 1100], fill=(200, 200, 200), width=2)
                 output_filename += f"-{data_rows[i + 1]['BarcodeNum'][-4:]}"
                 i += 2
@@ -695,7 +759,9 @@ st.set_page_config(page_title="Generator etichete preț", page_icon="🏷️")
 
 st.title("🏷️ Generator etichete preț")
 
-tab_csv, tab_manual, tab_calc = st.tabs(["📄 Din fișier CSV", "✍️ Adaugă manual", "🧮 Calculator reducere"])
+tab_csv, tab_manual, tab_calc, tab_presets = st.tabs([
+    "📄 Din fișier CSV", "✍️ Adaugă manual", "🧮 Calculator reducere", "🎨 Presetări"
+])
 
 # ---- Tab 1: existing CSV upload flow --------------------------------------
 with tab_csv:
@@ -822,13 +888,11 @@ Dacă un câmp e completat greșit, aplicația îți va arăta exact ce trebuie 
         key="m_pricing_type",
     )
 
-    page_format = st.radio(
-        "Format pagină *",
-        [
-            "Normal (2 pe pagină A4 — devine A5 dacă tai pagina în două)",
-            "A4 (o etichetă mare, rotită, pe toată pagina)",
-        ],
-        key="m_page_format",
+    preset_names = list(all_presets().keys())
+    preset_choice = st.selectbox(
+        "Preset etichetă *",
+        preset_names,
+        key="m_preset",
     )
 
     manual_calc = st.checkbox(
@@ -932,7 +996,8 @@ Dacă un câmp e completat greșit, aplicația îți va arăta exact ce trebuie 
             "BarcodeNum": barcode_num.strip(),
             "ProductCode": product_code.strip(),
             "StatusText": status_text.strip(),
-            "Format": "a4" if page_format.startswith("A4") else "normal",
+            "Format": get_preset(preset_choice).get("format", "a5"),
+            "Preset": preset_choice,
             "Quantity": int(quantity),
         }
         errors = validate_product(candidate, pricing_type)
@@ -951,7 +1016,7 @@ Dacă un câmp e completat greșit, aplicația îți va arăta exact ce trebuie 
             ]:
                 if k in st.session_state:
                     del st.session_state[k]
-            st.success(f"„{name}” a fost adăugat în listă.")
+            st.success(f'"{name}" a fost adăugat în listă.')
             st.rerun()
 
     if st.session_state.manual_products:
@@ -996,9 +1061,9 @@ Dacă un câmp e completat greșit, aplicația îți va arăta exact ce trebuie 
                 price_label = f"{p['NewPrice_piece']} lei/buc"
             else:
                 price_label = f"{p['NewPrice_m2']} lei/m²"
-            format_tag = " 📄 A4" if p.get("Format") == "a4" else ""
+            preset_tag = f" 🎨 {p.get('Preset', 'A5 (implicit)')}"
             cols[2].write(
-                f"**{p['Name']}** — {price_label} (-{p['Percentage']}%) — cod: {p['ProductCode']}{format_tag}"
+                f"**{p['Name']}** — {price_label} (-{p['Percentage']}%) — cod: {p['ProductCode']}{preset_tag}"
             )
             cols[3].number_input(
                 "Buc.",
@@ -1087,12 +1152,12 @@ Dacă un câmp e completat greșit, aplicația îți va arăta exact ce trebuie 
                     edit_status = st.text_input(
                         "Text status — opțional", value=p.get("StatusText", ""), key=f"edit_status_{idx}"
                     )
-                    edit_format = st.radio(
-                        "Format",
-                        ["Normal (2 pe pagină)", "A4 (o pagină)"],
-                        index=1 if p.get("Format") == "a4" else 0,
-                        key=f"edit_format_{idx}",
-                        horizontal=True,
+                    edit_preset = st.selectbox(
+                        "Preset etichetă",
+                        list(all_presets().keys()),
+                        index=list(all_presets().keys()).index(p.get("Preset", "A5 (implicit)"))
+                              if p.get("Preset", "A5 (implicit)") in all_presets() else 0,
+                        key=f"edit_preset_{idx}",
                     )
 
                     save_col, cancel_col = st.columns(2)
@@ -1108,7 +1173,8 @@ Dacă un câmp e completat greșit, aplicația îți va arăta exact ce trebuie 
                             "BarcodeNum": edit_barcode.strip(),
                             "ProductCode": edit_product_code.strip(),
                             "StatusText": edit_status.strip(),
-                            "Format": "a4" if edit_format.startswith("A4") else "normal",
+                            "Preset": edit_preset,
+                            "Format": get_preset(edit_preset).get("format", "a5"),
                         })
                         if updated["OldPrice_m2"] or updated["NewPrice_m2"]:
                             edit_pricing_type = "Preț pe m² + cutie"
@@ -1230,3 +1296,175 @@ with tab_calc:
         c3.metric("Preț nou", f"{new_price:.2f} lei")
     else:
         st.info("Completează ambele câmpuri pentru a vedea rezultatul.")
+
+# ---------------------------------------------------------------------------
+# Tab: Presetări
+# ---------------------------------------------------------------------------
+SAMPLE_DATA_M2 = {
+    "Name": "Produs Exemplu",
+    "Percentage": "20",
+    "OldPrice_piece": "96,00",
+    "NewPrice_piece": "76,80",
+    "OldPrice_m2": "48,00",
+    "NewPrice_m2": "38,40",
+    "BarcodeNum": "5901234123457",
+    "ProductCode": "EX-0001",
+    "StatusText": "",
+    "Preset": "A5 (implicit)",
+    "Format": "a5",
+    "Quantity": 1,
+}
+
+def render_preview(style, show_status=False):
+    sample = dict(SAMPLE_DATA_M2)
+    if show_status:
+        sample["StatusText"] = "Lichidare de Stoc"
+    img = Image.new('RGB', (800, 1100), color=(255, 255, 255))
+    draw = ImageDraw.Draw(img)
+    draw_label(draw, img, sample, 0, style=style)
+    buf = io.BytesIO()
+    img.save(buf, format="PNG")
+    buf.seek(0)
+    return buf
+
+with tab_presets:
+    st.header("🎨 Presetări etichete")
+    user_presets = load_presets()
+    presets = all_presets()
+    preset_names = list(presets.keys())
+
+    col_left, col_right = st.columns([1, 1.4])
+
+    with col_left:
+        st.subheader("Presetele tale")
+
+        selected_preset = st.selectbox(
+            "Selectează un preset",
+            preset_names,
+            key="ps_selected",
+        )
+
+        current = presets[selected_preset]
+        is_builtin = current.get("builtin", False)
+
+        if is_builtin:
+            st.info("Acesta este un preset implicit — nu poate fi modificat. Poți face o copie pentru a-l personaliza.")
+            if st.button("📋 Clonează ca preset nou", key="ps_clone"):
+                base_name = f"Copie {selected_preset}"
+                name = base_name
+                counter = 2
+                while name in user_presets:
+                    name = f"{base_name} {counter}"
+                    counter += 1
+                new_preset = {k: v for k, v in current.items() if k != "builtin"}
+                user_presets[name] = new_preset
+                save_presets(user_presets)
+                st.success(f'Preset "{name}" creat. Selecteaza-l din lista pentru a-l edita.')
+                st.rerun()
+        else:
+            st.caption("Preset personalizat — poate fi editat și șters.")
+            if st.button("🗑️ Șterge acest preset", key="ps_delete"):
+                del user_presets[selected_preset]
+                save_presets(user_presets)
+                st.success(f'Preset "{selected_preset}" sters.')
+                st.rerun()
+
+        st.divider()
+
+        # ---- New preset name ----
+        with st.expander("➕ Crează preset nou de la zero"):
+            new_name = st.text_input("Nume preset nou", key="ps_new_name")
+            new_fmt = st.radio("Format", ["A5", "A4"], key="ps_new_fmt", horizontal=True)
+            if st.button("Crează", key="ps_create_new"):
+                if not new_name.strip():
+                    st.error("Introdu un nume.")
+                elif new_name.strip() in presets:
+                    st.error("Există deja un preset cu acest nume.")
+                else:
+                    base = dict(DEFAULT_STYLE)
+                    base["format"] = "a4" if new_fmt == "A4" else "a5"
+                    user_presets[new_name.strip()] = base
+                    save_presets(user_presets)
+                    st.success(f'Preset "{new_name.strip()}" creat.')
+                    st.rerun()
+
+    with col_right:
+        st.subheader("Previzualizare")
+        show_status_prev = st.checkbox("Arată text status în previzualizare", key="ps_show_status")
+        preview_buf = render_preview(current, show_status=show_status_prev)
+        st.image(preview_buf, use_container_width=True)
+
+    # ---- Edit panel — only for custom presets ----
+    if not is_builtin:
+        st.divider()
+        st.subheader(f"Editează: {selected_preset}")
+
+        working = dict(current)
+
+        rename_col, _ = st.columns([1, 2])
+        new_preset_name = rename_col.text_input("Redenumește", value=selected_preset, key="ps_rename")
+
+        st.markdown("**Format**")
+        fmt_val = working.get("format", "a5")
+        new_fmt_edit = st.radio(
+            "Format pagină",
+            ["A5 (2 pe pagină)", "A4 (1 per pagină, rotit)"],
+            index=1 if fmt_val == "a4" else 0,
+            key="ps_fmt_edit",
+            horizontal=True,
+        )
+        working["format"] = "a4" if new_fmt_edit.startswith("A4") else "a5"
+
+        st.markdown("**Culori**")
+        cc = working.get("box_color", DEFAULT_STYLE["box_color"])
+        hex_color = "#{:02x}{:02x}{:02x}".format(*cc)
+        picked = st.color_picker("Culoare casetă procentaj", value=hex_color, key="ps_box_color")
+        r, g, b = int(picked[1:3], 16), int(picked[3:5], 16), int(picked[5:7], 16)
+        working["box_color"] = [r, g, b]
+        working["red_box_height"] = st.slider(
+            "Înălțime casetă procentaj (px)", 200, 600,
+            value=working.get("red_box_height", DEFAULT_STYLE["red_box_height"]),
+            key="ps_box_h",
+        )
+
+        st.markdown("**Etichete unități**")
+        uc1, uc2, uc3 = st.columns(3)
+        working["unit_piece"] = uc1.text_input("lei/buc (nou)", value=working.get("unit_piece", DEFAULT_STYLE["unit_piece"]), key="ps_unit_piece")
+        working["unit_m2"] = uc2.text_input("lei/m2 (nou)", value=working.get("unit_m2", DEFAULT_STYLE["unit_m2"]), key="ps_unit_m2")
+        working["unit_cutie"] = uc3.text_input("lei/cutie", value=working.get("unit_cutie", DEFAULT_STYLE["unit_cutie"]), key="ps_unit_cutie")
+        uo1, uo2 = st.columns(2)
+        working["unit_old_piece"] = uo1.text_input("lei/buc (vechi)", value=working.get("unit_old_piece", DEFAULT_STYLE["unit_old_piece"]), key="ps_unit_old_piece")
+        working["unit_old_m2"] = uo2.text_input("lei/m2 (vechi)", value=working.get("unit_old_m2", DEFAULT_STYLE["unit_old_m2"]), key="ps_unit_old_m2")
+
+        st.markdown("**Mărimi fonturi**")
+        fs1, fs2, fs3 = st.columns(3)
+        working["pct_font_size"] = fs1.slider("Procentaj", 100, 400, value=working.get("pct_font_size", DEFAULT_STYLE["pct_font_size"]), key="ps_fs_pct")
+        working["title_font_size"] = fs2.slider("Titlu produs", 20, 100, value=working.get("title_font_size", DEFAULT_STYLE["title_font_size"]), key="ps_fs_title")
+        working["old_price_font_size"] = fs3.slider("Preț vechi", 20, 100, value=working.get("old_price_font_size", DEFAULT_STYLE["old_price_font_size"]), key="ps_fs_old")
+        fs4, fs5, fs6 = st.columns(3)
+        working["new_price_font_size"] = fs4.slider("Preț nou (mare)", 80, 300, value=working.get("new_price_font_size", DEFAULT_STYLE["new_price_font_size"]), key="ps_fs_new")
+        working["new_price_decimal_font_size"] = fs5.slider("Preț nou (zecimale)", 30, 150, value=working.get("new_price_decimal_font_size", DEFAULT_STYLE["new_price_decimal_font_size"]), key="ps_fs_dec")
+        working["new_price_unit_font_size"] = fs6.slider("Unitate preț nou", 20, 100, value=working.get("new_price_unit_font_size", DEFAULT_STYLE["new_price_unit_font_size"]), key="ps_fs_unit")
+        fs7, fs8 = st.columns(2)
+        working["box_price_font_size"] = fs7.slider("Preț cutie", 20, 100, value=working.get("box_price_font_size", DEFAULT_STYLE["box_price_font_size"]), key="ps_fs_box")
+        working["status_font_size"] = fs8.slider("Text status", 14, 60, value=working.get("status_font_size", DEFAULT_STYLE["status_font_size"]), key="ps_fs_status")
+
+        st.markdown("**Poziții verticale (px)**")
+        py1, py2, py3 = st.columns(3)
+        working["old_price_y"] = py1.slider("Preț vechi Y", 400, 800, value=working.get("old_price_y", DEFAULT_STYLE["old_price_y"]), key="ps_y_old")
+        working["new_price_y"] = py2.slider("Preț nou Y", 400, 900, value=working.get("new_price_y", DEFAULT_STYLE["new_price_y"]), key="ps_y_new")
+        working["box_price_y"] = py3.slider("Preț cutie Y", 600, 1000, value=working.get("box_price_y", DEFAULT_STYLE["box_price_y"]), key="ps_y_box")
+
+        st.divider()
+        save_btn_col, _ = st.columns([1, 3])
+        if save_btn_col.button("💾 Salvează modificările", type="primary", key="ps_save"):
+            final_name = new_preset_name.strip() if new_preset_name.strip() else selected_preset
+            if final_name != selected_preset and final_name in presets:
+                st.error(f'Exista deja un preset cu numele "{final_name}".')
+            else:
+                if final_name != selected_preset and selected_preset in user_presets:
+                    del user_presets[selected_preset]
+                user_presets[final_name] = working
+                save_presets(user_presets)
+                st.success(f'Preset "{final_name}" salvat.')
+                st.rerun()
