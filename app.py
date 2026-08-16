@@ -293,7 +293,8 @@ def draw_label(draw, img, data, offset_x):
         y = STATUS_TOP + max(0, (available_h - total_h) // 2)
         for line in lines:
             line_w = draw.textlength(line, font=font_status)
-            draw.text((STATUS_RIGHT - line_w, y), line, fill=BLACK, font=font_status)
+            x = STATUS_LEFT + (max_w - line_w) / 2  # centre horizontally in the box
+            draw.text((x, y), line, fill=BLACK, font=font_status)
             y += line_h
 
 
