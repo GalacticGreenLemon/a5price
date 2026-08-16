@@ -255,7 +255,7 @@ def draw_label(draw, img, data, offset_x):
         available_h = STATUS_BOTTOM - STATUS_TOP
         status_str = data['StatusText']
         font_status = get_font(FONT_REGULAR, 35)
-        line_h = draw.textbbox((0, 0), "Ag", font=font_status)[3] - 8
+        line_h = draw.textbbox((0, 0), "Ag", font=font_status)[3] - 10
 
         def break_long_word(word, fnt, max_width):
             """Hard-wraps a single word with no spaces (e.g. a long test
