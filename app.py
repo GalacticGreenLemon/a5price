@@ -760,7 +760,7 @@ st.set_page_config(page_title="Generator etichete preț", page_icon="🏷️")
 st.title("🏷️ Generator etichete preț")
 
 tab_csv, tab_manual, tab_calc, tab_presets, tab_cards = st.tabs([
-    "📄 Din fișier CSV", "✍️ Adaugă manual", "🧮 Calculator reducere", "🎨 Presetări", "🪪 Carduri"
+    "📄 Din fișier CSV", "✍️ Adaugă manual", "🧮 Calculator reducere", "🎨 Presetări", "🪪 Mărci"
 ])
 
 # ---- Tab 1: existing CSV upload flow --------------------------------------
@@ -1470,7 +1470,7 @@ with tab_presets:
                 st.rerun()
 
 # ---------------------------------------------------------------------------
-# Tab: Carduri
+# Tab: Mărci
 # ---------------------------------------------------------------------------
 def create_code128_barcode(text):
     """Generates a Code128 barcode that can encode any text (not just 13 digits)."""
@@ -1510,17 +1510,20 @@ def draw_card(name, marca):
     # Marca text — regular, centered
     marca_bbox = draw.textbbox((0, 0), marca, font=font_marca)
     marca_w = marca_bbox[2] - marca_bbox[0]
-    marca_y = PADDING + name_h + 8
+    marca_y = PADDING + name_h + 2
     marca_x = (CARD_W - marca_w) / 2 - marca_bbox[0]
     draw.text((marca_x, marca_y), marca, fill=BLACK, font=font_marca)
 
-    # Barcode — centered below
+    # Barcode — centered below, cropped to ~60% height so the bottom tails are cut off
     bc_img = create_code128_barcode(marca)
     bc_target_w = CARD_W - PADDING * 4
-    bc_target_h = int(bc_img.height * bc_target_w / bc_img.width)
-    bc_img = bc_img.resize((bc_target_w, bc_target_h), Image.LANCZOS)
+    bc_full_h = int(bc_img.height * bc_target_w / bc_img.width)
+    bc_img = bc_img.resize((bc_target_w, bc_full_h), Image.LANCZOS)
+    # Crop to 62% of height — removes the long guard bars at the bottom
+    bc_crop_h = int(bc_full_h * 0.62)
+    bc_img = bc_img.crop((0, 0, bc_target_w, bc_crop_h))
     bc_x = (CARD_W - bc_target_w) // 2
-    bc_y = marca_y + marca_bbox[3] + 14
+    bc_y = marca_y + marca_bbox[3] + 4   # tighter gap between marca and barcode
     card.paste(bc_img, (bc_x, bc_y))
 
     return card
@@ -1559,15 +1562,15 @@ def build_cards_sheet(name, marca, copies):
 
 
 with tab_cards:
-    st.header("🪪 Generator carduri")
-    st.caption("Generează o coală A4 cu carduri identice, gata de tăiat.")
+    st.header("🪪 Generator mărci")
+    st.caption("Generează o coală A4 cu mărci identice, gata de tăiat.")
 
     col_form, col_prev = st.columns([1, 1.4])
 
     with col_form:
-        card_name = st.text_input("Nume (afișat pe card, nu e pe cod de bare)", placeholder="ex: Jigarov Cristian-Mihail", key="card_name")
-        card_marca = st.text_input("Marcă (text și cod de bare)", placeholder="ex: B00825336", key="card_marca")
-        card_copies = st.number_input("Număr de carduri", min_value=1, max_value=200, value=16, step=1, key="card_copies")
+        card_name = st.text_input("Nume (afișat pe card, nu e pe cod de bare)", placeholder="ex: Popescu Ioan", key="card_name")
+        card_marca = st.text_input("Marcă (text și cod de bare)", placeholder="ex: M00123456", key="card_marca")
+        card_copies = st.number_input("Număr de mărci", min_value=1, max_value=200, value=16, step=1, key="card_copies")
 
         if card_name.strip() and card_marca.strip():
             if st.button("Generează", type="primary", key="card_generate"):
