@@ -759,8 +759,8 @@ st.set_page_config(page_title="Generator etichete preț", page_icon="🏷️")
 
 st.title("🏷️ Generator etichete preț")
 
-tab_csv, tab_manual, tab_calc, tab_presets = st.tabs([
-    "📄 Din fișier CSV", "✍️ Adaugă manual", "🧮 Calculator reducere", "🎨 Presetări"
+tab_csv, tab_manual, tab_calc, tab_presets, tab_cards = st.tabs([
+    "📄 Din fișier CSV", "✍️ Adaugă manual", "🧮 Calculator reducere", "🎨 Presetări", "🪪 Carduri"
 ])
 
 # ---- Tab 1: existing CSV upload flow --------------------------------------
@@ -1468,3 +1468,148 @@ with tab_presets:
                 save_presets(user_presets)
                 st.success(f'Preset "{final_name}" salvat.')
                 st.rerun()
+
+# ---------------------------------------------------------------------------
+# Tab: Carduri
+# ---------------------------------------------------------------------------
+def create_code128_barcode(text):
+    """Generates a Code128 barcode that can encode any text (not just 13 digits)."""
+    code = barcode.get('code128', text, writer=ImageWriter())
+    fp = io.BytesIO()
+    code.write(fp, options={"write_text": False, "module_height": 15.0, "quiet_zone": 2.0})
+    fp.seek(0)
+    img = Image.open(fp)
+    # Crop the blank bottom margin (reserved for write_text we disabled)
+    bbox = ImageOps.invert(img.convert('L')).getbbox()
+    if bbox:
+        img = img.crop((0, 0, img.width, bbox[3]))
+    return img
+
+
+def draw_card(name, marca):
+    """Draws a single card: name bold on top, marca text centered, barcode below."""
+    CARD_W, CARD_H = 480, 340
+    PADDING = 18
+    BLACK = (0, 0, 0)
+    WHITE = (255, 255, 255)
+
+    card = Image.new('RGB', (CARD_W, CARD_H), WHITE)
+    draw = ImageDraw.Draw(card)
+    draw.rectangle([0, 0, CARD_W - 1, CARD_H - 1], outline=BLACK, width=2)
+
+    font_name = get_font(FONT_BOLD, 36)
+    font_marca = get_font(FONT_REGULAR, 28)
+
+    # Name — bold, centered, top
+    name_bbox = draw.textbbox((0, 0), name, font=font_name)
+    name_w = name_bbox[2] - name_bbox[0]
+    name_h = name_bbox[3] - name_bbox[1]
+    name_x = (CARD_W - name_w) / 2 - name_bbox[0]
+    draw.text((name_x, PADDING), name, fill=BLACK, font=font_name)
+
+    # Marca text — regular, centered
+    marca_bbox = draw.textbbox((0, 0), marca, font=font_marca)
+    marca_w = marca_bbox[2] - marca_bbox[0]
+    marca_y = PADDING + name_h + 8
+    marca_x = (CARD_W - marca_w) / 2 - marca_bbox[0]
+    draw.text((marca_x, marca_y), marca, fill=BLACK, font=font_marca)
+
+    # Barcode — centered below
+    bc_img = create_code128_barcode(marca)
+    bc_target_w = CARD_W - PADDING * 4
+    bc_target_h = int(bc_img.height * bc_target_w / bc_img.width)
+    bc_img = bc_img.resize((bc_target_w, bc_target_h), Image.LANCZOS)
+    bc_x = (CARD_W - bc_target_w) // 2
+    bc_y = marca_y + marca_bbox[3] + 14
+    card.paste(bc_img, (bc_x, bc_y))
+
+    return card
+
+
+def build_cards_sheet(name, marca, copies):
+    """
+    Lays out cards in a 4-column grid on an A4 landscape sheet.
+    A4 at 150dpi ≈ 1754×1240px. Cards are 480×340px each.
+    """
+    COLS = 4
+    ROWS = 4
+    PER_PAGE = COLS * ROWS
+    CARD_W, CARD_H = 480, 340
+    MARGIN_X = 37
+    MARGIN_Y = 30
+    GAP = 0
+
+    pages = []
+    for page_start in range(0, copies, PER_PAGE):
+        page_copies = min(PER_PAGE, copies - page_start)
+        sheet_w = MARGIN_X * 2 + COLS * CARD_W + (COLS - 1) * GAP
+        sheet_h = MARGIN_Y * 2 + ROWS * CARD_H + (ROWS - 1) * GAP
+        sheet = Image.new('RGB', (sheet_w, sheet_h), (255, 255, 255))
+        card_img = draw_card(name, marca)
+
+        for idx in range(page_copies):
+            col = idx % COLS
+            row = idx // COLS
+            x = MARGIN_X + col * (CARD_W + GAP)
+            y = MARGIN_Y + row * (CARD_H + GAP)
+            sheet.paste(card_img, (x, y))
+
+        pages.append(sheet)
+    return pages
+
+
+with tab_cards:
+    st.header("🪪 Generator carduri")
+    st.caption("Generează o coală A4 cu carduri identice, gata de tăiat.")
+
+    col_form, col_prev = st.columns([1, 1.4])
+
+    with col_form:
+        card_name = st.text_input("Nume (afișat pe card, nu e pe cod de bare)", placeholder="ex: Jigarov Cristian-Mihail", key="card_name")
+        card_marca = st.text_input("Marcă (text și cod de bare)", placeholder="ex: B00825336", key="card_marca")
+        card_copies = st.number_input("Număr de carduri", min_value=1, max_value=200, value=16, step=1, key="card_copies")
+
+        if card_name.strip() and card_marca.strip():
+            if st.button("Generează", type="primary", key="card_generate"):
+                with st.spinner("Se generează..."):
+                    pages = build_cards_sheet(card_name.strip(), card_marca.strip(), int(card_copies))
+                    st.session_state["card_pages"] = pages
+
+    with col_prev:
+        st.subheader("Previzualizare")
+        if card_name.strip() and card_marca.strip():
+            preview_card = draw_card(card_name.strip(), card_marca.strip())
+            buf = io.BytesIO()
+            preview_card.save(buf, format="PNG")
+            buf.seek(0)
+            st.image(buf, caption="Un card (previzualizare)", use_container_width=True)
+        else:
+            st.info("Completează numele și marca pentru a vedea previzualizarea.")
+
+    if "card_pages" in st.session_state and st.session_state["card_pages"]:
+        pages = st.session_state["card_pages"]
+        st.divider()
+        st.subheader(f"Coală {'generată' if len(pages) == 1 else 'generate'} — {len(pages)} {'pagină' if len(pages) == 1 else 'pagini'}")
+
+        if len(pages) == 1:
+            buf = io.BytesIO()
+            pages[0].save(buf, format="PNG")
+            buf.seek(0)
+            st.image(buf, use_container_width=True)
+            buf.seek(0)
+            st.download_button("⬇️ Descarcă coală PNG", data=buf, file_name="carduri.png", mime="image/png", key="card_dl_single")
+        else:
+            # Multiple pages — zip them
+            zip_buf = io.BytesIO()
+            with zipfile.ZipFile(zip_buf, "w") as zipf:
+                for i, page in enumerate(pages, 1):
+                    buf = io.BytesIO()
+                    page.save(buf, format="PNG")
+                    zipf.writestr(f"carduri_pagina_{i}.png", buf.getvalue())
+            zip_buf.seek(0)
+            # Preview first page
+            preview_buf = io.BytesIO()
+            pages[0].save(preview_buf, format="PNG")
+            preview_buf.seek(0)
+            st.image(preview_buf, caption="Prima pagină", use_container_width=True)
+            st.download_button("⬇️ Descarcă toate paginile (ZIP)", data=zip_buf, file_name="carduri.zip", mime="application/zip", key="card_dl_zip")
